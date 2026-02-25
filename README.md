@@ -54,7 +54,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 
 ```bash
 git clone https://github.com/travisstephenfraser/Rubrica.git
-cd Rubrica
+cd exam_grader
 pip install -r requirements.txt
 ```
 
