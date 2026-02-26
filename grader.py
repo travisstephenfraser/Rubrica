@@ -1595,4 +1595,4 @@ if __name__ == "__main__":
     print(f"   OCR model : {OLLAMA_VISION_MODEL}  (change OLLAMA_VISION_MODEL to swap)")
     print("   Grading   : Claude Sonnet via Anthropic API (anonymous IDs only)")
     print("   Open: http://localhost:5000\n")
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, use_reloader=False)
