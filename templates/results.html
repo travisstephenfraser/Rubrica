@@ -43,6 +43,10 @@
       <div class="col-auto">
         <button type="submit" class="btn btn-outline-primary btn-sm">Apply</button>
       </div>
+      <div class="col-auto ms-2 d-flex gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleAllDetails(true)">Expand All</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleAllDetails(false)">Collapse All</button>
+      </div>
     </div>
   </div>
 </form>
@@ -106,6 +110,8 @@
         </button>
         <a href="/exam/{{ r.anon_id }}/report" target="_blank"
            class="btn btn-sm btn-outline-primary">Report</a>
+        <a href="/exam/{{ r.anon_id }}?from=results" target="_blank"
+           class="btn btn-sm btn-outline-secondary">Review</a>
       </td>
     </tr>
     <!-- Expandable detail row -->
@@ -164,6 +170,13 @@
 {% endif %}
 
 <script>
+window.toggleAllDetails = function(expand) {
+  document.querySelectorAll('[id^="detail-"]').forEach(function(el) {
+    var bs = bootstrap.Collapse.getOrCreateInstance(el, { toggle: false });
+    expand ? bs.show() : bs.hide();
+  });
+};
+
 (function () {
   function pctClass(p) {
     if (p >= 90) return 'text-success';

@@ -7,18 +7,67 @@
   .stat-card { background:#fff; border:1px solid #dee2e6; border-radius:8px; padding:1rem 1.25rem; }
   .stat-card .num { font-size:1.9rem; font-weight:700; line-height:1; }
   .stat-card .lbl { font-size:.78rem; color:#6c757d; margin-top:.25rem; }
+
+  @media print {
+    /* Let the user pick orientation in their browser — we just hide chrome
+       and tighten spacing so everything lands on one page.             */
+    @page { margin: 12mm 10mm; }
+
+    nav.navbar,
+    #grade-banner,
+    .analytics-toolbar,
+    .analytics-filters     { display: none !important; }
+
+    body                   { background: white !important; }
+    .container             { max-width: 100% !important; }
+    .pb-5                  { padding-bottom: 0 !important; }
+    .card                  { box-shadow: none !important; border: 1px solid #dee2e6 !important; }
+
+    .print-header          { display: block !important; }
+
+    .stat-card             { padding: .35rem .6rem !important; }
+    .stat-card .num        { font-size: 1.25rem !important; }
+    .stat-card .lbl        { font-size: .68rem !important; margin-top: .1rem !important; }
+    .row.g-3.mb-4          { margin-bottom: .4rem !important; }
+    .row.g-4.mb-4          { margin-bottom: .35rem !important; }
+    .alert                 { padding: .35rem .65rem !important; margin-bottom: .4rem !important; font-size: .78rem !important; }
+    h6.fw-semibold         { margin-bottom: .35rem !important; }
+
+    /* Question chart always starts on its own page and fills it */
+    .q-chart-section       { page-break-before: always; break-before: page; }
+    #wrap-q                { height: 1120px !important; }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+
+<!-- Print-only header (hidden on screen) -->
+<div class="print-header" style="display:none; margin-bottom:.5rem;">
+  <div class="d-flex justify-content-between align-items-baseline">
+    <h5 class="mb-0" style="font-weight:700; letter-spacing:.02em;">Rubrica — Exam Analytics</h5>
+    <span style="font-size:.75rem; color:#6c757d;">
+      {% if version_filter %}Version {{ version_filter }}{% else %}All versions{% endif %}{% if batch_filter %} · Batch {{ batch_filter }}{% endif %}
+      &nbsp;·&nbsp; {{ now }}
+    </span>
+  </div>
+  <hr style="margin:.35rem 0 .5rem; border-color:#dee2e6;">
+</div>
+
+<!-- Screen toolbar -->
+<div class="d-flex justify-content-between align-items-center mb-3 analytics-toolbar">
   <h2 class="mb-0">Analytics</h2>
-  <a href="{{ request.path }}{% if version_filter or batch_filter %}?{% if version_filter %}version={{ version_filter }}{% endif %}{% if version_filter and batch_filter %}&{% endif %}{% if batch_filter %}batch={{ batch_filter }}{% endif %}{% endif %}"
-     class="btn btn-outline-secondary btn-sm">↺ Refresh</a>
+  <div class="d-flex gap-2">
+    <a href="{{ request.path }}{% if version_filter or batch_filter %}?{% if version_filter %}version={{ version_filter }}{% endif %}{% if version_filter and batch_filter %}&{% endif %}{% if batch_filter %}batch={{ batch_filter }}{% endif %}{% endif %}"
+       class="btn btn-outline-secondary btn-sm">↺ Refresh</a>
+    {% if n > 0 %}
+    <button onclick="printAnalytics()" class="btn btn-outline-secondary btn-sm">⎙ Print</button>
+    {% endif %}
+  </div>
 </div>
 
 <!-- Filters -->
-<form method="GET" action="/analytics" class="card border-0 shadow-sm mb-4">
+<form method="GET" action="/analytics" class="card border-0 shadow-sm mb-4 analytics-filters">
   <div class="card-body">
     <div class="row g-2 align-items-end">
       <div class="col-auto">
@@ -108,22 +157,22 @@
 
 <!-- Row 1: Distribution + Grade Band -->
 <div class="row g-4 mb-4">
-  <div class="col-lg-8">
+  <div class="col-lg-6">
     <div class="card border-0 shadow-sm h-100">
       <div class="card-body">
         <h6 class="fw-semibold text-muted mb-3">Grade Distribution</h6>
-        <div style="position:relative; height:525px">
+        <div id="wrap-dist" style="position:relative; height:525px">
           <canvas id="distChart"></canvas>
         </div>
       </div>
     </div>
   </div>
-  <div class="col-lg-4">
+  <div class="col-lg-6">
     <div class="card border-0 shadow-sm h-100">
       <div class="card-body d-flex flex-column">
         <h6 class="fw-semibold text-muted mb-3">Grade Band Breakdown</h6>
         <div class="flex-grow-1 d-flex align-items-center justify-content-center">
-          <div style="position:relative; width:100%; max-width:560px">
+          <div id="wrap-band" style="position:relative; width:100%; height:525px">
             <canvas id="bandChart"></canvas>
           </div>
         </div>
@@ -132,16 +181,31 @@
   </div>
 </div>
 
-<!-- Row 2: Question difficulty -->
+<!-- Row 2: Question difficulty — own page when printed -->
 {% if q_labels %}
+<div class="q-chart-section">
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
-    <h6 class="fw-semibold text-muted mb-3">Average Score % per Question</h6>
-    <div style="position:relative; height:{{ [260, q_labels|length * 42]|max }}px">
+    <div class="d-flex align-items-center gap-3 mb-3">
+      <h6 class="fw-semibold text-muted mb-0">Average Score % per Question</h6>
+      <form method="GET" action="/analytics" class="d-flex align-items-center gap-2 mb-0">
+        {% if version_filter %}<input type="hidden" name="version" value="{{ version_filter }}">{% endif %}
+        {% if batch_filter %}<input type="hidden" name="batch" value="{{ batch_filter }}">{% endif %}
+        <label class="form-label mb-0 small fw-semibold text-muted">Version</label>
+        <select name="q_version" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for v in versions %}
+          <option value="{{ v }}" {% if q_version == v %}selected{% endif %}>Version {{ v }}</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+    <div id="wrap-q" style="position:relative; height:{{ [260, q_labels|length * 42]|max }}px">
       <canvas id="qChart"></canvas>
     </div>
   </div>
 </div>
+</div><!-- /.q-chart-section -->
 {% endif %}
 
 <script>
@@ -198,6 +262,7 @@
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: { position: 'bottom', labels: { boxWidth: 12, padding: 10 } },
         tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} student${ctx.parsed !== 1 ? 's' : ''}` } }
@@ -228,7 +293,56 @@
       }
     });
   }
-})();
+}());
+
+// ---------------------------------------------------------------------------
+// Print: resize charts to print-friendly dimensions BEFORE window.print(),
+// so Chart.js re-renders at the correct size and canvases are not blank.
+// The browser then captures the live canvas — no image swap needed.
+// ---------------------------------------------------------------------------
+function printAnalytics() {
+  // Set suggested filename (browser uses document.title as PDF save name)
+  var origTitle = document.title;
+  var d   = new Date();
+  var pad = function (n) { return String(n).padStart(2, '0'); };
+  document.title = 'analytics_' +
+    d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    '_' + pad(d.getHours()) + pad(d.getMinutes());
+
+  // Shrink chart containers to fit a single printed page
+  var printH = { 'wrap-dist': '350px', 'wrap-band': '350px', 'wrap-q': '1120px' };
+  var origH  = {};
+  Object.keys(printH).forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) { origH[id] = el.style.height; el.style.height = printH[id]; }
+  });
+
+  // Tell Chart.js to re-render at the new container sizes
+  ['distChart', 'bandChart', 'qChart'].forEach(function (id) {
+    var canvas = document.getElementById(id);
+    if (!canvas) return;
+    var chart = Chart.getChart(canvas);
+    if (chart) chart.resize();
+  });
+
+  // Small delay so the browser paints the updated canvases before printing
+  setTimeout(function () {
+    window.print();
+
+    // Restore original sizes after the print dialog closes
+    Object.keys(origH).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.style.height = origH[id];
+    });
+    ['distChart', 'bandChart', 'qChart'].forEach(function (id) {
+      var canvas = document.getElementById(id);
+      if (!canvas) return;
+      var chart = Chart.getChart(canvas);
+      if (chart) chart.resize();
+    });
+    document.title = origTitle;
+  }, 200);
+}
 </script>
 
 {% endif %}

@@ -243,8 +243,14 @@
         <tr><td>Database</td><td>SQLite — single file, no server process</td></tr>
         <tr><td>PDF splitting</td><td>pypdf — PdfReader / PdfWriter, in-memory</td></tr>
         <tr><td>PDF page rendering</td><td>pypdfium2 — renders pages to PNG at 2× scale</td></tr>
-        <tr><td>AI grading model</td><td>Anthropic <code>claude-sonnet-4-6</code> (vision)</td></tr>
-        <tr><td>AI name extraction</td><td>Anthropic <code>claude-haiku-4-5</code> (cover page vision)</td></tr>
+        <tr><td>AI grading model</td><td>Anthropic <code>{{ claude_model }}</code> (vision)</td></tr>
+        <tr><td>AI name extraction</td><td>Ollama <code>{{ ollama_model }}</code> — runs locally, no API cost</td></tr>
+        {% if build_info %}
+        <tr><td>Build</td><td>
+          <code>{{ build_info.commit }}</code>
+          &mdash; {{ build_info.branch }} &mdash; {{ build_info.date }}
+        </td></tr>
+        {% endif %}
         <tr><td>UI framework</td><td>Bootstrap 5 — served from CDN</td></tr>
         <tr><td>Charts</td><td>Chart.js 4 — grade distribution, band breakdown, question difficulty</td></tr>
       </tbody>
@@ -263,8 +269,8 @@
       No file handles held open (avoids Windows file-locking), no Claude API calls, no cost.</div></div>
 
     <div class="flow-step"><div class="flow-num">3</div>
-      <div><strong>Name extraction + review page.</strong> Claude Haiku reads each cover page (page 0)
-      and pre-fills student name and SID. A thumbnail and full-page modal viewer let you verify
+      <div><strong>Name extraction + review page.</strong> Ollama (<code>{{ ollama_model }}</code>) reads each cover page (page 0)
+      locally and pre-fills student name and SID. A thumbnail and full-page modal viewer let you verify
       all pages are attached and correct any misreads before confirming. Names and SIDs can be
       toggled hidden during the review session (opacity-only — data always present). Roster
       fuzzy-match available if a class list has been uploaded.</div></div>
@@ -304,7 +310,7 @@
       <li>Upload one combined PDF → specify pages-per-exam → splits instantly (no API cost).</li>
       <li>Single-exam upload: set pages-per-exam equal to the exam page count.</li>
       <li>Name assignment page shows a cover-page thumbnail per exam and a full modal page viewer.</li>
-      <li>Claude Haiku reads each cover page to pre-fill student name and SID automatically.</li>
+      <li>Ollama (<code>{{ ollama_model }}</code>) reads each cover page locally to pre-fill student name and SID — no API cost, no data leaves the machine.</li>
       <li>Roster fuzzy-match confirms identity against an uploaded class list (local only, no API).</li>
       <li>Names and SIDs can be hidden during review with a toggle — values are always preserved in the form and submitted correctly.</li>
       <li>Cover page blurs automatically in the full-page review modal when Private Mode is active.</li>
@@ -441,12 +447,12 @@ roster (
     <table class="table table-bordered">
       <thead><tr><th>Item</th><th>Detail</th><th>Rate / Estimate</th></tr></thead>
       <tbody>
-        <tr><td>Grading model</td><td>claude-sonnet-4-6</td><td>$3 / $15 per 1M tokens (in/out)</td></tr>
+        <tr><td>Grading model</td><td>{{ claude_model }}</td><td>$3 / $15 per 1M tokens (in/out)</td></tr>
         <tr><td>Per exam (12 pages, vision)</td><td>11 answer pages rendered at 2× scale as PNG</td><td>~$0.09 – $0.15</td></tr>
         <tr><td>Exams graded so far</td><td>{{ graded_exams }} exam{{ 's' if graded_exams != 1 else '' }}</td>
             <td><strong>~${{ est_cost }} estimated</strong></td></tr>
         <tr><td>Batch splitting</td><td>In-memory, no API calls</td><td>$0</td></tr>
-        <tr><td>Name extraction (per exam)</td><td>claude-haiku-4-5 reads cover page (page 0) for name &amp; SID</td><td>~$0.001 – $0.002</td></tr>
+        <tr><td>Name extraction (per exam)</td><td>Ollama <code>{{ ollama_model }}</code> reads cover page (page 0) locally</td><td>$0 — runs on-device</td></tr>
         <tr><td>Rubric fidelity</td><td>PDF sent as native document block each grading call</td><td>Included in per-exam cost</td></tr>
       </tbody>
     </table>

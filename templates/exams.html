@@ -6,74 +6,57 @@
   <a href="/upload-batch" class="btn btn-outline-primary btn-sm">+ Upload more</a>
 </div>
 
-<!-- Danger zone -->
-<div class="card border-danger mb-4">
-  <div class="card-header bg-danger bg-opacity-10 text-danger fw-semibold">Danger Zone</div>
-  <div class="card-body d-flex flex-column gap-3">
-
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <div>
-        <p class="fw-semibold mb-0">Purge Grade Data</p>
-        <p class="text-muted small mb-0">Clears saved grades so all exams can be re-graded. Does not delete exam PDFs or rubrics.</p>
-      </div>
-      <form method="POST" action="/clear-all-grades"
-            onsubmit="return confirm('Clear ALL saved grades? This cannot be undone. Exams and rubrics are kept.')">
-        <button type="submit" class="btn btn-danger btn-sm">Clear All Grades</button>
-      </form>
-    </div>
-
-    <hr class="my-0">
-
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <div>
-        <p class="fw-semibold mb-0">Remove All Exams</p>
-        <p class="text-muted small mb-0">Permanently deletes every exam record and its PDF from disk. Rubrics and roster are kept.</p>
-      </div>
-      <form method="POST" action="/exams/delete-all"
-            onsubmit="return confirm('Remove ALL exams? This permanently deletes every exam PDF and cannot be undone.')">
-        <button type="submit" class="btn btn-danger btn-sm">Remove All Exams</button>
-      </form>
-    </div>
-
-  </div>
-</div>
-
-<!-- Bulk action bar -->
+<!-- Filter + action bar -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-body">
-    <div class="row g-3">
+    <div class="d-flex align-items-end flex-wrap gap-2">
 
-      <!-- Grade all -->
-      <div class="col-md-6">
-        <p class="fw-semibold mb-2">Grade All</p>
-        {% if missing_rubric_versions %}
-        <div class="alert alert-warning py-2 px-3 mb-2 small">
-          <strong>⚠ Missing rubric for Version{{ 's' if missing_rubric_versions|length > 1 else '' }}:
-          {{ missing_rubric_versions | join(', ') }}</strong> — grading will fail for these exams.
-          <a href="/setup" class="alert-link">Set up rubric →</a>
-        </div>
-        {% endif %}
-        <form method="POST" action="/grade-all" class="d-flex gap-2 align-items-end flex-wrap">
-          <div>
-            <select name="version" class="form-select form-select-sm" style="width:120px">
-              <option value="">All versions</option>
-              <option value="A">Version A</option>
-              <option value="B">Version B</option>
-            </select>
-          </div>
-          <div>
-            <select name="batch" class="form-select form-select-sm" style="width:120px">
-              <option value="">All batches</option>
-              <option value="1">Batch 1</option>
-              <option value="2">Batch 2</option>
-              <option value="3">Batch 3</option>
-              <option value="4">Batch 4</option>
-              <option value="5">Batch 5</option>
-            </select>
-          </div>
-          <button type="submit" class="btn btn-success btn-sm"
-                  onclick="return confirm('Grade all OCR\'d exams? This will call the Claude API.')">
-            ▶ Grade All
+      <!-- Filter label -->
+      <span class="fw-semibold me-1 align-self-center">Filter</span>
+
+      {% if missing_rubric_versions %}
+      <div class="alert alert-warning py-1 px-2 mb-0 small align-self-center">
+        <strong>⚠ Missing rubric for Version{{ 's' if missing_rubric_versions|length > 1 else '' }}:
+        {{ missing_rubric_versions | join(', ') }}</strong> —
+        <a href="/setup" class="alert-link">Set up →</a>
+      </div>
+      {% endif %}
+
+      <form method="POST" action="/grade-all" class="d-flex gap-2 align-items-end flex-wrap mb-0">
+        <select name="version" class="form-select form-select-sm" style="width:120px">
+          <option value="">All versions</option>
+          <option value="A">Version A</option>
+          <option value="B">Version B</option>
+        </select>
+        <select name="batch" class="form-select form-select-sm" style="width:120px">
+          <option value="">All batches</option>
+          <option value="1">Batch 1</option>
+          <option value="2">Batch 2</option>
+          <option value="3">Batch 3</option>
+          <option value="4">Batch 4</option>
+          <option value="5">Batch 5</option>
+        </select>
+        <button type="submit" class="btn btn-success btn-sm"
+                title="Grade all ungraded exams matching the selected filters. Calls the Claude API."
+                onclick="return confirm('Grade all ungraded exams matching the selected filters? This will call the Claude API.')">
+          ▶ Grade All
+        </button>
+      </form>
+
+      <!-- Danger actions pushed to the right -->
+      <div class="ms-auto d-flex gap-2">
+        <form method="POST" action="/clear-all-grades">
+          <button type="submit" class="btn btn-outline-warning btn-sm"
+                  title="Clears saved grades so all exams can be re-graded. Does not delete exam PDFs or rubrics."
+                  onclick="return confirm('Clear ALL saved grades? This cannot be undone. Exams and rubrics are kept.')">
+            Clear All Grades
+          </button>
+        </form>
+        <form method="POST" action="/exams/delete-all">
+          <button type="submit" class="btn btn-outline-danger btn-sm"
+                  title="Permanently deletes every exam record and its PDF from disk. Rubrics and roster are kept."
+                  onclick="return confirm('Remove ALL exams? This permanently deletes every exam PDF and cannot be undone.')">
+            Remove All Exams
           </button>
         </form>
       </div>
@@ -82,10 +65,24 @@
   </div>
 </div>
 
+<!-- Grade Selected toolbar (appears when checkboxes are checked) -->
+<div id="grade-selected-bar" class="d-none mb-3 d-flex align-items-center gap-3 px-3 py-2 bg-white rounded shadow-sm border">
+  <span id="selected-count" class="fw-semibold text-muted small">0 selected</span>
+  <button id="grade-selected-btn" class="btn btn-success btn-sm" disabled>
+    ▶ Grade Selected
+  </button>
+  <button type="button" id="deselect-all-btn" class="btn btn-outline-secondary btn-sm ms-auto">
+    Clear selection
+  </button>
+</div>
+
 {% if exams %}
 <table class="table table-hover align-middle">
   <thead class="table-light">
     <tr>
+      <th style="width:36px">
+        <input type="checkbox" id="select-all-cb" class="form-check-input" title="Select all">
+      </th>
       <th>Anon ID</th>
       <th>Version</th>
       <th>Batch</th>
@@ -97,6 +94,9 @@
   <tbody>
     {% for e in exams %}
     <tr>
+      <td>
+        <input type="checkbox" class="exam-checkbox form-check-input" value="{{ e.anon_id }}">
+      </td>
       <td><span class="anon-id">{{ e.anon_id }}</span></td>
       <td>
         <span class="badge bg-secondary">Version {{ e.version }}</span>
@@ -112,16 +112,15 @@
       <!-- Grade status -->
       <td>
         {% if e.graded %}
-          <form method="POST" action="/grade/{{ e.anon_id }}" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-success"
-                    onclick="return confirm('Re-grade {{ e.anon_id }}? This will overwrite the existing grade.')">
-              ✓ Re-grade
-            </button>
-          </form>
+          <button type="button" class="btn btn-sm btn-success grade-one-btn"
+                  data-anon-id="{{ e.anon_id }}" data-regrade="1">
+            ✓ Re-grade
+          </button>
         {% else %}
-          <form method="POST" action="/grade/{{ e.anon_id }}" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-outline-success">Grade</button>
-          </form>
+          <button type="button" class="btn btn-sm btn-outline-success grade-one-btn"
+                  data-anon-id="{{ e.anon_id }}">
+            Grade
+          </button>
         {% endif %}
       </td>
 
@@ -129,6 +128,10 @@
         <a href="/exam/{{ e.anon_id }}" class="btn btn-sm btn-outline-primary">Review</a>
         {% if e.graded %}
           <a href="/results" class="btn btn-sm btn-outline-secondary">Results</a>
+          <form method="POST" action="/exam/{{ e.anon_id }}/clear-grade"
+                onsubmit="return confirm('Clear grade for {{ e.anon_id }}? This cannot be undone.')">
+            <button type="submit" class="btn btn-sm btn-outline-warning">Clear</button>
+          </form>
         {% endif %}
         <form method="POST" action="/exam/{{ e.anon_id }}/delete"
               onsubmit="return confirm('Remove exam {{ e.anon_id }}? This cannot be undone.')">
@@ -150,4 +153,107 @@
   <a href="/upload-batch" class="btn btn-secondary">← Back</a>
   <a href="/results" class="btn btn-primary">Next: View Results →</a>
 </div>
+
+<script>
+(function () {
+  var selectAllCb  = document.getElementById('select-all-cb');
+  var selBar       = document.getElementById('grade-selected-bar');
+  var selCount     = document.getElementById('selected-count');
+  var gradeSelBtn  = document.getElementById('grade-selected-btn');
+  var deselectBtn  = document.getElementById('deselect-all-btn');
+
+  function getChecked() {
+    return Array.from(document.querySelectorAll('.exam-checkbox:checked'));
+  }
+
+  function updateSelUI() {
+    var n = getChecked().length;
+    selCount.textContent = n + ' selected';
+    gradeSelBtn.disabled = (n === 0);
+    if (n > 0) selBar.classList.remove('d-none');
+    else selBar.classList.add('d-none');
+  }
+
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', function () {
+      document.querySelectorAll('.exam-checkbox').forEach(function (cb) {
+        cb.checked = selectAllCb.checked;
+      });
+      updateSelUI();
+    });
+  }
+
+  document.querySelectorAll('.exam-checkbox').forEach(function (cb) {
+    cb.addEventListener('change', updateSelUI);
+  });
+
+  deselectBtn.addEventListener('click', function () {
+    document.querySelectorAll('.exam-checkbox').forEach(function (cb) { cb.checked = false; });
+    if (selectAllCb) selectAllCb.checked = false;
+    updateSelUI();
+  });
+
+  // ---- Core: submit a list of anon_ids to /grade-selected ----
+  function submitGradeJob(anonIds, doneCb) {
+    var fd = new FormData();
+    anonIds.forEach(function (id) { fd.append('anon_ids', id); });
+    fetch('/grade-selected', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          alert(data.error);
+          if (doneCb) doneCb(false);
+        } else {
+          if (typeof window.startGradePolling === 'function') window.startGradePolling();
+          if (doneCb) doneCb(true);
+        }
+      })
+      .catch(function () {
+        alert('Failed to start grading. Please try again.');
+        if (doneCb) doneCb(false);
+      });
+  }
+
+  // Grade Selected button
+  gradeSelBtn.addEventListener('click', function () {
+    var ids = getChecked().map(function (cb) { return cb.value; });
+    if (ids.length === 0) return;
+    if (!confirm('Grade ' + ids.length + ' selected exam(s)? This will call the Claude API.')) return;
+    gradeSelBtn.disabled = true;
+    gradeSelBtn.textContent = 'Starting…';
+    submitGradeJob(ids, function (ok) {
+      gradeSelBtn.textContent = '▶ Grade Selected';
+      if (ok) {
+        document.querySelectorAll('.exam-checkbox').forEach(function (cb) { cb.checked = false; });
+        if (selectAllCb) selectAllCb.checked = false;
+        updateSelUI();
+      } else {
+        gradeSelBtn.disabled = false;
+      }
+    });
+  });
+
+  // Individual Grade / Re-grade buttons
+  document.querySelectorAll('.grade-one-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var anonId   = btn.dataset.anonId;
+      var isRegrade = btn.dataset.regrade === '1';
+      var msg = isRegrade
+        ? 'Re-grade ' + anonId + '? This will overwrite the existing grade.'
+        : 'Grade ' + anonId + '? This will call the Claude API.';
+      if (!confirm(msg)) return;
+      var orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '…';
+      submitGradeJob([anonId], function (ok) {
+        if (!ok) {
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+        // on success: leave button disabled — banner shows progress
+      });
+    });
+  });
+}());
+</script>
 {% endblock %}

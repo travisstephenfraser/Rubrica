@@ -14,9 +14,13 @@ import os
 import secrets
 import sqlite3
 import statistics as _stats
+import queue
 import threading
 from datetime import datetime
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
 
 import anthropic
 import docx
@@ -42,6 +46,9 @@ ALLOWED_EXT = {".pdf"}
 # Swap for any Ollama vision model: "llava:13b", "minicpm-v", etc.
 OLLAMA_VISION_MODEL = "llama3.2-vision"
 
+# Claude model used for grading. Update here when upgrading models.
+CLAUDE_MODEL = "claude-sonnet-4-6"
+
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 RUBRIC_DIR.mkdir(exist_ok=True)
@@ -63,8 +70,9 @@ def toggle_private_mode():
 # ---------------------------------------------------------------------------
 # Background grading job state
 # ---------------------------------------------------------------------------
-_grade_job: dict = {"running": False, "total": 0, "done": 0, "failed": 0, "errors": []}
-_grade_lock = threading.Lock()
+_grade_job: dict   = {"running": False, "total": 0, "done": 0, "failed": 0, "errors": []}
+_grade_lock        = threading.Lock()
+_grade_queue: queue.Queue = queue.Queue()
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -588,6 +596,12 @@ MULTIPLE CHOICE instructions (critical):
 - If no letter is clearly marked, award 0 and note "no answer marked" in feedback.
 - If two letters appear marked, use the one with the clearest, most deliberate marking.
 
+QUESTION CONSOLIDATION (critical):
+- Each question must appear as a SINGLE entry in the scores array, even if the rubric breaks it into sub-parts (a), (b), (c).
+- Sum all sub-part points into one earned_points and one max_points for the parent question.
+- Use the question number only (e.g. "Q3", "Q22") — never "Q3a", "Q3b", "Q22a", etc.
+- Include feedback for all sub-parts combined in the single feedback string.
+
 - Respond ONLY with valid JSON in exactly this format:
 {{
   "anon_id": "{exam_row["anon_id"]}",
@@ -600,9 +614,9 @@ MULTIPLE CHOICE instructions (critical):
   "overall_feedback": "<2-3 sentence summary>"
 }}"""
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=CLAUDE_MODEL,
         max_tokens=8192,
         system=system_prompt,
         messages=[{"role": "user", "content": content}],
@@ -624,6 +638,38 @@ MULTIPLE CHOICE instructions (critical):
         raise ValueError(f"No JSON found. Claude responded with: {response_text[:500]}")
 
     data = json.loads(response_text[start:end])
+
+    # Consolidate any sub-part rows (e.g. "Q3a", "Q3 (a)", "Q3-a") into their parent
+    # question ("Q3") by summing points and concatenating feedback.
+    if data.get("scores"):
+        import re
+        merged = {}   # parent_key -> {max, earned, feedbacks}
+        order  = []   # preserve first-seen order
+        for s in data["scores"]:
+            raw = str(s.get("question", "")).strip()
+            # Strip trailing sub-part suffixes: Q3a / Q3(a) / Q3 (a) / Q3-a / Q3_a / Q3.a
+            parent = re.sub(r'[\s\-_\.]?\(?[a-zA-Z]\)?$', '', raw).strip()
+            if not parent:
+                parent = raw
+            if parent not in merged:
+                merged[parent] = {"max_points": 0, "earned_points": 0, "feedbacks": []}
+                order.append(parent)
+            merged[parent]["max_points"]    += float(s.get("max_points",    0))
+            merged[parent]["earned_points"] += float(s.get("earned_points", 0))
+            fb = s.get("feedback", "").strip()
+            if fb:
+                # Prefix feedback with sub-part label when consolidating
+                label = raw if raw != parent else ""
+                merged[parent]["feedbacks"].append(f"{label}: {fb}" if label else fb)
+        data["scores"] = [
+            {
+                "question":      k,
+                "max_points":    round(v["max_points"],    2),
+                "earned_points": round(v["earned_points"], 2),
+                "feedback":      " | ".join(v["feedbacks"]),
+            }
+            for k, v in [(k, merged[k]) for k in order]
+        ]
 
     # Recalculate total_earned from individual scores — Claude's summary total sometimes
     # diverges from its own per-question scores due to rounding (e.g. 18 × 3.33 = 59.94
@@ -658,20 +704,24 @@ MULTIPLE CHOICE instructions (critical):
     return data
 
 
-def _run_grade_all_job(exam_ids: list):
-    """Background thread: grades exams one by one and updates _grade_job."""
+def _run_grade_worker():
+    """Background thread: drains _grade_queue until empty for 2 seconds."""
     conn = sqlite3.connect(str(DB_PATH), detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     try:
-        for anon_id in exam_ids:
-            exam = conn.execute(
-                "SELECT * FROM exams WHERE anon_id=?", (anon_id,)
-            ).fetchone()
-            rubric = conn.execute(
-                "SELECT * FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
-                (exam["version"],)
-            ).fetchone()
+        while True:
             try:
+                anon_id = _grade_queue.get(timeout=2)
+            except queue.Empty:
+                break
+            try:
+                exam = conn.execute(
+                    "SELECT * FROM exams WHERE anon_id=?", (anon_id,)
+                ).fetchone()
+                rubric = conn.execute(
+                    "SELECT * FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
+                    (exam["version"],)
+                ).fetchone()
                 if not rubric:
                     raise ValueError(f"No rubric for Version {exam['version']}")
                 grade_data = _grade_exam(exam, rubric)
@@ -686,10 +736,25 @@ def _run_grade_all_job(exam_ids: list):
                 with _grade_lock:
                     _grade_job["failed"] += 1
                     _grade_job["errors"].append(f"{anon_id}: {str(e)[:120]}")
+            _grade_queue.task_done()
     finally:
         conn.close()
         with _grade_lock:
             _grade_job["running"] = False
+
+
+def _enqueue_and_start(anon_ids: list):
+    """Add exam IDs to the grading queue, starting the worker thread if needed."""
+    global _grade_job
+    for aid in anon_ids:
+        _grade_queue.put(aid)
+    with _grade_lock:
+        if _grade_job["running"]:
+            _grade_job["total"] += len(anon_ids)
+        else:
+            _grade_job = {"running": True, "total": len(anon_ids),
+                          "done": 0, "failed": 0, "errors": []}
+            threading.Thread(target=_run_grade_worker, daemon=True).start()
 
 
 @app.route("/grade/<anon_id>", methods=["POST"])
@@ -720,12 +785,6 @@ def grade_one(anon_id):
 
 @app.route("/grade-all", methods=["POST"])
 def grade_all():
-    global _grade_job
-    with _grade_lock:
-        if _grade_job["running"]:
-            flash("Grading is already running.", "warning")
-            return redirect(url_for("grade_progress"))
-
     db = get_db()
     version_filter = request.form.get("version", "").strip().upper() or None
     batch_filter   = request.form.get("batch", "").strip() or None
@@ -746,17 +805,28 @@ def grade_all():
         flash("No ungraded exams found.", "info")
         return redirect(url_for("exams"))
 
-    with _grade_lock:
-        _grade_job = {
-            "running": True, "total": len(exam_ids),
-            "done": 0, "failed": 0, "errors": []
-        }
-
-    thread = threading.Thread(
-        target=_run_grade_all_job, args=(exam_ids,), daemon=True
-    )
-    thread.start()
+    _enqueue_and_start(exam_ids)
     return redirect(url_for("grade_progress"))
+
+
+@app.route("/grade-selected", methods=["POST"])
+def grade_selected():
+    anon_ids = request.form.getlist("anon_ids")
+    if not anon_ids:
+        return jsonify({"error": "No exams selected."}), 400
+
+    db = get_db()
+    placeholders = ",".join("?" * len(anon_ids))
+    valid_ids = [
+        r["anon_id"] for r in db.execute(
+            f"SELECT anon_id FROM exams WHERE anon_id IN ({placeholders})", anon_ids
+        ).fetchall()
+    ]
+    if not valid_ids:
+        return jsonify({"error": "None of the selected exams were found."}), 400
+
+    _enqueue_and_start(valid_ids)
+    return jsonify({"ok": True, "total": len(valid_ids)})
 
 
 @app.route("/grade-all/progress")
@@ -1206,6 +1276,15 @@ def docs():
     upload_bytes = sum(f.stat().st_size for f in UPLOAD_DIR.glob("*.pdf") if f.is_file())
     upload_mb    = round(upload_bytes / 1_048_576, 1)
 
+    # Build info written by pre-commit hook
+    build_info_path = BASE_DIR / "build_info.json"
+    build_info = {}
+    if build_info_path.exists():
+        try:
+            build_info = json.loads(build_info_path.read_text())
+        except Exception:
+            pass
+
     return render_template("docs.html",
         total_exams=total_exams,
         graded_exams=graded_exams,
@@ -1216,6 +1295,9 @@ def docs():
         est_cost=est_cost,
         rubric_file_count=rubric_file_count,
         upload_mb=upload_mb,
+        claude_model=CLAUDE_MODEL,
+        ollama_model=OLLAMA_VISION_MODEL,
+        build_info=build_info,
     )
 
 
@@ -1371,7 +1453,9 @@ def analytics():
     db = get_db()
     version_filter = request.args.get("version", "").upper() or None
     batch_filter   = request.args.get("batch", "") or None
+    q_version      = request.args.get("q_version", "").upper() or None
 
+    # Main query — drives distribution, band, and summary stats
     query  = "SELECT * FROM exams WHERE grade_data IS NOT NULL"
     params = []
     if version_filter:
@@ -1383,15 +1467,28 @@ def analytics():
 
     rows = db.execute(query, params).fetchall()
 
-    pct_scores     = []
-    question_stats = {}   # q_name -> {earned, possible, n, below70}
-
+    pct_scores = []
     for row in rows:
         gd       = json.loads(row["grade_data"])
         possible = float(gd.get("total_possible", 0))
         earned   = float(gd.get("total_earned",   0))
         if possible > 0:
             pct_scores.append(round(earned / possible * 100, 2))
+
+    # Question stats — separate query filtered by q_version only
+    q_query  = "SELECT * FROM exams WHERE grade_data IS NOT NULL"
+    q_params = []
+    if q_version:
+        q_query += " AND version=?"
+        q_params.append(q_version)
+    elif version_filter:
+        q_query += " AND version=?"
+        q_params.append(version_filter)
+
+    q_rows = db.execute(q_query, q_params).fetchall()
+    question_stats = {}
+    for row in q_rows:
+        gd = json.loads(row["grade_data"])
         for s in gd.get("scores", []):
             q  = s.get("question", "").strip()
             ep = float(s.get("earned_points", 0))
@@ -1461,7 +1558,30 @@ def analytics():
         batches=[r["batch"] for r in batches],
         version_filter=version_filter,
         batch_filter=batch_filter,
+        q_version=q_version,
+        now=datetime.utcnow().strftime("%B %d, %Y"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Launch Ollama
+# ---------------------------------------------------------------------------
+
+@app.route("/launch-ollama", methods=["POST"])
+def launch_ollama():
+    import subprocess, shutil
+    ollama_path = shutil.which("ollama") or r"C:\Users\tfras\AppData\Local\Programs\Ollama\ollama.exe"
+    try:
+        subprocess.Popen(
+            [ollama_path, "serve"],
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        return {"ok": True, "message": "Ollama launched — allow a few seconds to load."}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}, 500
 
 
 # ---------------------------------------------------------------------------

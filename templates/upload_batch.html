@@ -44,6 +44,12 @@
       </div>
 
       <div class="d-flex align-items-center gap-3 flex-wrap">
+        <button type="button" id="launchOllamaBtn" class="btn btn-outline-secondary px-4"
+                title="Confirm GPU is enabled before launching"
+                onclick="launchOllama()">
+          Launch Ollama Vision
+        </button>
+        <span id="ollamaStatus" class="text-muted small"></span>
         <button type="submit" class="btn btn-primary px-4">Upload &amp; Split</button>
         <span id="spinner" class="text-muted d-none">
           <span class="spinner-border spinner-border-sm me-1" role="status"></span>
@@ -65,5 +71,25 @@
     document.getElementById('spinner').classList.remove('d-none');
     // Don't disable the submit button here — that can block submission in some browsers
   });
+
+  function launchOllama() {
+    const btn = document.getElementById('launchOllamaBtn');
+    const status = document.getElementById('ollamaStatus');
+    btn.disabled = true;
+    status.textContent = 'Launching…';
+    fetch('/launch-ollama', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        status.textContent = data.message;
+        status.className = data.ok ? 'text-success small' : 'text-danger small';
+        if (data.ok) btn.textContent = 'Ollama Launched';
+        else btn.disabled = false;
+      })
+      .catch(() => {
+        status.textContent = 'Request failed.';
+        status.className = 'text-danger small';
+        btn.disabled = false;
+      });
+  }
 </script>
 {% endblock %}

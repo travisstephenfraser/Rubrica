@@ -50,6 +50,23 @@
     </form>
   </div>
 </nav>
+<!-- Global grading progress banner -->
+<div id="grade-banner" class="d-none" style="background:#0f2027;border-bottom:2px solid #198754;">
+  <div class="container py-2 d-flex align-items-center gap-3">
+    <span id="grade-banner-label" class="text-white small fw-semibold text-nowrap">Grading…</span>
+    <div class="progress flex-grow-1" style="height:16px;min-width:80px">
+      <div id="grade-banner-bar"
+           class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+           role="progressbar" style="width:0%">0%</div>
+    </div>
+    <span id="grade-banner-counts" class="text-white-50 small text-nowrap"></span>
+    <a id="grade-banner-results" href="/results"
+       class="btn btn-outline-light btn-sm d-none">View Results</a>
+    <button id="grade-banner-close" type="button"
+            class="btn-close btn-close-white d-none" aria-label="Close"></button>
+  </div>
+</div>
+
 <div class="container pb-5">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
@@ -62,5 +79,65 @@
   {% block content %}{% endblock %}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function () {
+  var _poller = null;
+  var banner     = document.getElementById('grade-banner');
+  var bar        = document.getElementById('grade-banner-bar');
+  var label      = document.getElementById('grade-banner-label');
+  var counts     = document.getElementById('grade-banner-counts');
+  var resultsBtn = document.getElementById('grade-banner-results');
+  var closeBtn   = document.getElementById('grade-banner-close');
+
+  closeBtn.addEventListener('click', function () {
+    banner.classList.add('d-none');
+    if (_poller) { clearInterval(_poller); _poller = null; }
+  });
+
+  function render(data) {
+    var processed = (data.done || 0) + (data.failed || 0);
+    var total = data.total || 1;
+    var pct = Math.round(processed / total * 100);
+    banner.classList.remove('d-none');
+    bar.style.width = pct + '%';
+    bar.textContent = pct + '%';
+    counts.textContent = data.done + ' graded · ' + data.failed + ' failed · ' + data.total + ' total';
+    if (data.running) {
+      label.textContent = 'Grading ' + processed + ' of ' + data.total + '…';
+      bar.classList.add('progress-bar-animated', 'progress-bar-striped');
+      closeBtn.classList.add('d-none');
+      resultsBtn.classList.add('d-none');
+    } else {
+      label.textContent = data.failed > 0 ? 'Grading complete (with errors)' : 'Grading complete ✓';
+      bar.classList.remove('progress-bar-animated');
+      closeBtn.classList.remove('d-none');
+      resultsBtn.classList.remove('d-none');
+    }
+  }
+
+  function tick() {
+    fetch('/grade-all/status')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.total > 0) render(data);
+        if (data.running && !_poller) {
+          _poller = setInterval(tick, 2000);
+        }
+        if (!data.running && _poller) {
+          clearInterval(_poller);
+          _poller = null;
+        }
+      })
+      .catch(function () {});
+  }
+
+  window.startGradePolling = function () {
+    if (!_poller) { _poller = setInterval(tick, 2000); }
+    tick();
+  };
+
+  tick(); // initial check on every page load
+}());
+</script>
 </body>
 </html>
