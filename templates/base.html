@@ -35,6 +35,16 @@
       <a class="nav-link" href="/">Dashboard</a>
       <a class="nav-link" href="/setup">Rubrics</a>
       <a class="nav-link" href="/upload-batch">Upload</a>
+      {% if active_review_id %}
+      <a class="nav-link d-flex align-items-center gap-1" href="/upload-batch/review/{{ active_review_id }}">
+        Review
+        {% if active_review_ocr_running %}
+        <span class="spinner-border spinner-border-sm" style="width:.6rem;height:.6rem;" role="status"></span>
+        {% else %}
+        <span class="badge bg-warning text-dark" style="font-size:.6rem;">!</span>
+        {% endif %}
+      </a>
+      {% endif %}
       <a class="nav-link" href="/exams">Exams</a>
       <a class="nav-link" href="/results">Results</a>
       <a class="nav-link" href="/roster" style="color:#6dc8b8 !important">Roster</a>

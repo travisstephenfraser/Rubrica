@@ -62,6 +62,18 @@ def inject_private_mode():
     return {"private_mode": session.get("private_mode", False)}
 
 
+@app.context_processor
+def inject_active_review():
+    review_files = sorted(DATA_DIR.glob("review_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not review_files:
+        return {"active_review_id": None, "active_review_ocr_running": False}
+    review_path = review_files[0]
+    review_id   = review_path.stem[len("review_"):]
+    with _ocr_jobs_lock:
+        ocr_running = _ocr_jobs.get(review_id, {}).get("running", False)
+    return {"active_review_id": review_id, "active_review_ocr_running": ocr_running}
+
+
 @app.route("/toggle-private-mode", methods=["POST"])
 def toggle_private_mode():
     session["private_mode"] = not session.get("private_mode", False)
@@ -73,6 +85,10 @@ def toggle_private_mode():
 _grade_job: dict   = {"running": False, "total": 0, "done": 0, "failed": 0, "errors": []}
 _grade_lock        = threading.Lock()
 _grade_queue: queue.Queue = queue.Queue()
+
+# Background OCR job state (keyed by review_id)
+_ocr_jobs: dict    = {}
+_ocr_jobs_lock     = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -308,6 +324,26 @@ def read_name_sid_from_cover(file_path: str) -> dict:
         return {"name": "", "sid": ""}
 
 
+def _run_ocr_background(review_id: str, review_path: Path):
+    """Run cover-page OCR for every exam in a review session on a background thread."""
+    try:
+        data  = json.loads(review_path.read_text())
+        total = len(data["exams"])
+        with _ocr_jobs_lock:
+            _ocr_jobs[review_id] = {"total": total, "done": 0, "running": True}
+        for i, exam in enumerate(data["exams"]):
+            result       = read_name_sid_from_cover(exam["file_path"])
+            exam["name"] = result["name"]
+            exam["sid"]  = result["sid"]
+            review_path.write_text(json.dumps(data))
+            with _ocr_jobs_lock:
+                _ocr_jobs[review_id]["done"] = i + 1
+    except Exception:
+        pass
+    finally:
+        with _ocr_jobs_lock:
+            if review_id in _ocr_jobs:
+                _ocr_jobs[review_id]["running"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -1063,16 +1099,30 @@ def upload_batch():
             flash("The PDF appears to be empty or could not be split.", "danger")
             return redirect(url_for("upload_batch"))
 
-        # Extract name + SID from each cover page using Claude vision
-        for exam in exams:
-            result = read_name_sid_from_cover(exam["file_path"])
-            exam["name"] = result["name"]
-            exam["sid"]  = result["sid"]
+        # Discard any existing review sessions before creating a new one
+        for stale in DATA_DIR.glob("review_*.json"):
+            try:
+                stale_data = json.loads(stale.read_text())
+                for e in stale_data.get("exams", []):
+                    Path(e["file_path"]).unlink(missing_ok=True)
+            except Exception:
+                pass
+            stale.unlink(missing_ok=True)
 
-        # Store split results and send to name-entry page
+        # Store split results immediately — OCR runs in background if opted in
         review_id   = secrets.token_hex(8)
         review_data = {"version": version, "batch": batch, "exams": exams}
-        (DATA_DIR / f"review_{review_id}.json").write_text(json.dumps(review_data))
+        review_path = DATA_DIR / f"review_{review_id}.json"
+        review_path.write_text(json.dumps(review_data))
+
+        if request.form.get("run_ocr") == "1":
+            t = threading.Thread(
+                target=_run_ocr_background,
+                args=(review_id, review_path),
+                daemon=True,
+            )
+            t.start()
+
         return redirect(url_for("batch_review", review_id=review_id))
 
     return render_template("upload_batch.html")
@@ -1087,12 +1137,31 @@ def batch_review(review_id):
     data         = json.loads(review_path.read_text())
     db           = get_db()
     roster_count = db.execute("SELECT COUNT(*) FROM roster").fetchone()[0]
+    with _ocr_jobs_lock:
+        ocr_running = _ocr_jobs.get(review_id, {}).get("running", False)
     return render_template("batch_review.html",
                            review_id=review_id,
                            version=data["version"],
                            batch=data["batch"],
                            exams=data["exams"],
-                           roster_count=roster_count)
+                           roster_count=roster_count,
+                           ocr_running=ocr_running)
+
+
+@app.route("/upload-batch/ocr-status/<review_id>")
+def ocr_status(review_id):
+    with _ocr_jobs_lock:
+        job = dict(_ocr_jobs.get(review_id, {"total": 0, "done": 0, "running": False}))
+    review_path = DATA_DIR / f"review_{review_id}.json"
+    exams = []
+    if review_path.exists():
+        try:
+            data  = json.loads(review_path.read_text())
+            exams = [{"name": e.get("name", ""), "sid": e.get("sid", "")}
+                     for e in data["exams"]]
+        except Exception:
+            pass
+    return jsonify({**job, "exams": exams})
 
 
 @app.route("/upload-batch/confirm/<review_id>", methods=["POST"])
@@ -1131,6 +1200,22 @@ def batch_confirm(review_id):
         "success"
     )
     return redirect(url_for("exams"))
+
+
+@app.route("/upload-batch/discard/<review_id>", methods=["POST"])
+def batch_discard(review_id):
+    review_path = DATA_DIR / f"review_{review_id}.json"
+    if review_path.exists():
+        try:
+            data = json.loads(review_path.read_text())
+            for exam in data.get("exams", []):
+                Path(exam["file_path"]).unlink(missing_ok=True)
+        except Exception:
+            pass
+        review_path.unlink(missing_ok=True)
+    with _ocr_jobs_lock:
+        _ocr_jobs.pop(review_id, None)
+    return redirect(url_for("upload_batch"))
 
 
 @app.route("/upload-batch/preview/<review_id>/<int:exam_index>/<int:page_num>")

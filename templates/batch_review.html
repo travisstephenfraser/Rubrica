@@ -19,8 +19,24 @@
   <a href="/upload-batch" class="btn btn-outline-secondary btn-sm">← Start over</a>
 </div>
 
+{% if ocr_running %}
+<div id="ocr-banner" class="alert alert-info d-flex align-items-center gap-3 mb-3">
+  <div class="spinner-border spinner-border-sm flex-shrink-0" role="status"></div>
+  <div class="flex-grow-1">
+    <div class="d-flex justify-content-between mb-1">
+      <span id="ocr-label" class="small fw-semibold">Extracting names from cover pages…</span>
+      <span id="ocr-counts" class="small text-muted"></span>
+    </div>
+    <div class="progress" style="height:6px">
+      <div id="ocr-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+           role="progressbar" style="width:0%"></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="alert alert-info py-2 mb-3 small">
-  <strong>Tip:</strong> Claude auto-extracted names &amp; SIDs from each cover page — verify and correct as needed.
+  <strong>Tip:</strong> Ollama auto-extracts names &amp; SIDs from each cover page — verify and correct as needed.
   Click a thumbnail or <em>Review</em> to confirm all pages are attached.
   Names and SIDs are stored locally only and <strong>never</strong> sent to Claude for grading.
 </div>
@@ -106,18 +122,20 @@
     </div>
   </div>
 
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <div class="d-flex gap-2">
-      <button type="submit" class="btn btn-success px-4">
-        ✓ Save {{ exams|length }} Exam{{ 's' if exams|length != 1 else '' }}
-      </button>
-      <a href="/upload-batch" class="btn btn-outline-danger">
-        ✗ Discard &amp; Start Over
-      </a>
-    </div>
-    <a href="/exams" class="btn btn-primary">Next: View Exams →</a>
-  </div>
 </form>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+  <div class="d-flex gap-2">
+    <button type="submit" form="confirmForm" class="btn btn-success px-4">
+      ✓ Save {{ exams|length }} Exam{{ 's' if exams|length != 1 else '' }}
+    </button>
+    <form method="POST" action="/upload-batch/discard/{{ review_id }}"
+          onsubmit="return confirm('Discard this session? Split PDFs will be deleted.')">
+      <button type="submit" class="btn btn-outline-danger">✗ Discard &amp; Start Over</button>
+    </form>
+  </div>
+  <a href="/exams" class="btn btn-primary">Next: View Exams →</a>
+</div>
 
 <!-- ── Page review modal ─────────────────────────────────────── -->
 <div class="modal fade" id="reviewModal" tabindex="-1" aria-labelledby="reviewModalLabel" aria-hidden="true">
@@ -216,6 +234,45 @@ function stepPage(delta) {
   const next = activePage + delta;
   if (next >= 0 && next < totalPages) loadPage(next);
 }
+
+// ── Background OCR polling ───────────────────────────────────────────────────
+{% if ocr_running %}
+// Track user edits so polling never overwrites manual input
+document.querySelectorAll('[name^="name_"],[name^="sid_"]').forEach(function(el) {
+  el.addEventListener('input', function() { el.dataset.userEdited = '1'; });
+});
+
+(function pollOcr() {
+  fetch('/upload-batch/ocr-status/{{ review_id }}')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var banner = document.getElementById('ocr-banner');
+      if (!banner) return;
+
+      var pct = data.total > 0 ? Math.round(data.done / data.total * 100) : 0;
+      document.getElementById('ocr-bar').style.width = pct + '%';
+      document.getElementById('ocr-counts').textContent = data.done + ' / ' + data.total;
+
+      if (data.exams) {
+        data.exams.forEach(function(exam, i) {
+          var nameEl = document.querySelector('[name="name_' + i + '"]');
+          var sidEl  = document.querySelector('[name="sid_'  + i + '"]');
+          if (nameEl && !nameEl.dataset.userEdited && exam.name) nameEl.value = exam.name;
+          if (sidEl  && !sidEl.dataset.userEdited  && exam.sid)  sidEl.value  = exam.sid;
+        });
+      }
+
+      if (data.running) {
+        setTimeout(pollOcr, 2000);
+      } else {
+        document.getElementById('ocr-label').textContent = 'Name extraction complete ✓';
+        document.getElementById('ocr-bar').classList.remove('progress-bar-animated', 'progress-bar-striped');
+        setTimeout(function() { banner.classList.add('d-none'); }, 3000);
+      }
+    })
+    .catch(function() { setTimeout(pollOcr, 3000); });
+})();
+{% endif %}
 
 // ── Roster matching ──────────────────────────────────────────────────────────
 function matchRoster() {
