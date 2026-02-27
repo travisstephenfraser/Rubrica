@@ -9,8 +9,8 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 ## How It Works
 
 1. **Upload a rubric** — PDF or DOCX; sent natively to Claude to preserve tables and formatting
-2. **Upload exams** — one combined batch PDF; the app splits it automatically by page count
-3. **Assign names** — a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors
+2. **Upload exams** — up to 3 batch PDFs at once; the app splits all of them by page count and merges into one review session
+3. **Assign names** — a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors; extraction runs in the background with live progress and an abort button
 4. **Grade** — Claude Sonnet reads each answer page as an image and scores it against the rubric, using only an anonymous ID — never a name
 5. **Review & export** — grades mapped back to names locally; export to CSV or print per-student reports
 6. **Analyze** — grade distribution, band breakdown, and per-question difficulty charts
@@ -20,9 +20,11 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 ## Features
 
 - **Anonymous grading** — random 8-character IDs replace student names before any API call
-- **Batch PDF splitting** — upload one file for the whole class; split happens entirely in memory
-- **Cover page vision** — local Ollama vision model (default: `llama3.2-vision`) auto-extracts names and SIDs from cover pages entirely on-device; swap models via `OLLAMA_VISION_MODEL` in `grader.py`
+- **Multi-batch upload** — upload up to 3 batch PDFs at once, each with its own batch number; all split and merged into one review session in a single pass
+- **Cover page vision** — local Ollama vision model (default: `llama3.2-vision`) auto-extracts names and SIDs in the background with live progress; opt-in checkbox to skip on CPU-only machines; abortable mid-run
+- **Cover page consistency check** — perceptual hash comparison (8×8 phash) flags any exam whose cover page differs structurally from the majority; runs locally with no API call; flagged exams show a yellow border and ⚠ badge
 - **Launch Ollama button** — one-click Ollama startup from the upload page with a GPU-enable reminder tooltip
+- **Review tab** — persistent nav tab appears whenever an unsaved review session exists, survives page navigation and app restarts
 - **Roster fuzzy matching** — local name/SID matching with character confusion corrections (O→0, l→1, etc.)
 - **Private Mode** — single toggle hides all student names, SIDs, and blurs cover pages across every page simultaneously; designed for presentations and screen-sharing
 - **Rubric versioning** — upload and manage multiple rubric versions (A, B, …) for different exam variants
