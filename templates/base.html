@@ -92,12 +92,20 @@
   closeBtn.addEventListener('click', function () {
     banner.classList.add('d-none');
     if (_poller) { clearInterval(_poller); _poller = null; }
+    sessionStorage.setItem('gradeBannerDismissed', 'true');
   });
 
   function render(data) {
     var processed = (data.done || 0) + (data.failed || 0);
     var total = data.total || 1;
     var pct = Math.round(processed / total * 100);
+    if (data.running) {
+      // New active grading session — clear any prior dismissal
+      sessionStorage.removeItem('gradeBannerDismissed');
+    } else if (sessionStorage.getItem('gradeBannerDismissed') === 'true') {
+      // User already dismissed this completed session — leave banner hidden
+      return;
+    }
     banner.classList.remove('d-none');
     bar.style.width = pct + '%';
     bar.textContent = pct + '%';

@@ -250,22 +250,25 @@ def match_against_roster(extracted_name: str, extracted_sid: str, roster_entries
 # OCR — render PDF pages as images and transcribe with Claude vision
 # ---------------------------------------------------------------------------
 
+_pdfium_lock = threading.Lock()
+
 def _render_page_png(pdf_path: str, page_num: int, scale: float = 2.0) -> bytes:
-    doc = pdfium.PdfDocument(pdf_path)
-    try:
-        page    = doc[page_num]
-        bitmap  = page.render(scale=scale)
-        pil_img = bitmap.to_pil()
-        buf     = io.BytesIO()
-        pil_img.save(buf, format="PNG")
-        result  = buf.getvalue()
-        # Explicitly release PDFium sub-objects before closing the document.
-        # Python's GC may not free them promptly, which corrupts PDFium's
-        # internal state across multiple calls (particularly on Windows).
-        del pil_img, bitmap, page
-        return result
-    finally:
-        doc.close()
+    with _pdfium_lock:
+        doc = pdfium.PdfDocument(pdf_path)
+        try:
+            page    = doc[page_num]
+            bitmap  = page.render(scale=scale)
+            pil_img = bitmap.to_pil()
+            buf     = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            result  = buf.getvalue()
+            # Explicitly release PDFium sub-objects before closing the document.
+            # Python's GC may not free them promptly, which corrupts PDFium's
+            # internal state across multiple calls (particularly on Windows).
+            del pil_img, bitmap, page
+            return result
+        finally:
+            doc.close()
 
 
 
@@ -1573,11 +1576,10 @@ def launch_ollama():
     ollama_path = shutil.which("ollama") or r"C:\Users\tfras\AppData\Local\Programs\Ollama\ollama.exe"
     try:
         subprocess.Popen(
-            [ollama_path, "serve"],
+            [ollama_path],
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            close_fds=True,
         )
         return {"ok": True, "message": "Ollama launched — allow a few seconds to load."}
     except Exception as e:

@@ -42,6 +42,10 @@
           ▶ Grade All
         </button>
       </form>
+      <button type="button" id="select-ungraded-btn" class="btn btn-outline-secondary btn-sm"
+              title="Check all exams that have not yet been graded">
+        Select Ungraded
+      </button>
 
       <!-- Danger actions pushed to the right -->
       <div class="ms-auto d-flex gap-2">
@@ -95,7 +99,7 @@
     {% for e in exams %}
     <tr>
       <td>
-        <input type="checkbox" class="exam-checkbox form-check-input" value="{{ e.anon_id }}">
+        <input type="checkbox" class="exam-checkbox form-check-input" value="{{ e.anon_id }}" data-graded="{{ '1' if e.graded else '0' }}">
       </td>
       <td><span class="anon-id">{{ e.anon_id }}</span></td>
       <td>
@@ -156,11 +160,12 @@
 
 <script>
 (function () {
-  var selectAllCb  = document.getElementById('select-all-cb');
-  var selBar       = document.getElementById('grade-selected-bar');
-  var selCount     = document.getElementById('selected-count');
-  var gradeSelBtn  = document.getElementById('grade-selected-btn');
-  var deselectBtn  = document.getElementById('deselect-all-btn');
+  var selectAllCb      = document.getElementById('select-all-cb');
+  var selBar           = document.getElementById('grade-selected-bar');
+  var selCount         = document.getElementById('selected-count');
+  var gradeSelBtn      = document.getElementById('grade-selected-btn');
+  var deselectBtn      = document.getElementById('deselect-all-btn');
+  var selectUngradedBtn = document.getElementById('select-ungraded-btn');
 
   function getChecked() {
     return Array.from(document.querySelectorAll('.exam-checkbox:checked'));
@@ -192,6 +197,19 @@
     if (selectAllCb) selectAllCb.checked = false;
     updateSelUI();
   });
+
+  if (selectUngradedBtn) {
+    selectUngradedBtn.addEventListener('click', function () {
+      var any = false;
+      document.querySelectorAll('.exam-checkbox').forEach(function (cb) {
+        cb.checked = cb.dataset.graded === '0';
+        if (cb.checked) any = true;
+      });
+      if (selectAllCb) selectAllCb.checked = false;
+      updateSelUI();
+      if (!any) alert('No ungraded exams found.');
+    });
+  }
 
   // ---- Core: submit a list of anon_ids to /grade-selected ----
   function submitGradeJob(anonIds, doneCb) {
