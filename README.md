@@ -30,7 +30,8 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Analytics** — grade distribution histogram, letter grade donut chart, per-question average score bar chart with per-version filter, automatic low-performance alerts
 - **Student reports** — printable per-student report with score card, progress bar, and question breakdown
 - **Export to CSV** — summary (one row per student) and detailed (one column per question) formats
-- **Live progress** — background grading thread with a live progress bar; browser stays usable
+- **Live progress** — background grading thread with a live progress bar that persists across page navigation; dismisses cleanly and reappears only when a new grading session starts
+- **Select Ungraded** — one-click button to check all ungraded exams at once, surfacing the Grade Selected toolbar for batch grading without manual selection
 - **Grade management** — grade individual exams, re-grade, or clear grades per-exam or all at once
 - **Results navigation** — Expand/Collapse All details, Review exam link, and Back to Results from any exam detail page
 - **Built-in docs** — full system documentation at `/docs`, printable as PDF
