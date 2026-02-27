@@ -21,7 +21,7 @@
 
 {% if ocr_running %}
 <div id="ocr-banner" class="alert alert-info d-flex align-items-center gap-3 mb-3">
-  <div class="spinner-border spinner-border-sm flex-shrink-0" role="status"></div>
+  <div class="spinner-border spinner-border-sm flex-shrink-0" role="status" id="ocr-spinner"></div>
   <div class="flex-grow-1">
     <div class="d-flex justify-content-between mb-1">
       <span id="ocr-label" class="small fw-semibold">Extracting names from cover pages…</span>
@@ -32,6 +32,8 @@
            role="progressbar" style="width:0%"></div>
     </div>
   </div>
+  <button id="ocr-abort-btn" type="button" class="btn btn-sm btn-outline-danger flex-shrink-0"
+          onclick="abortOcr()">Stop</button>
 </div>
 {% endif %}
 
@@ -81,10 +83,14 @@
             <td>
               <img src="/upload-batch/preview/{{ review_id }}/{{ loop.index0 }}/0?thumb=1"
                    loading="lazy"
-                   style="height:70px; width:auto; cursor:pointer; border-radius:4px; border:1px solid #dee2e6;"
+                   style="height:70px; width:auto; cursor:pointer; border-radius:4px; border:1px solid {% if exam.cover_flag %}#ffc107{% else %}#dee2e6{% endif %};"
                    onclick="openReview({{ loop.index0 }}, {{ exam.page_count }}, {{ loop.index }})"
                    title="Click to review all pages"
                    alt="Cover page">
+              {% if exam.cover_flag %}
+              <div><span class="badge bg-warning text-dark mt-1" style="font-size:.65rem;"
+                         title="Cover page differs from the majority — verify this exam">⚠ Cover</span></div>
+              {% endif %}
             </td>
 
             <!-- Name input (pre-filled by Claude) -->
@@ -269,13 +275,26 @@ document.querySelectorAll('[name^="name_"],[name^="sid_"]').forEach(function(el)
       if (data.running) {
         setTimeout(pollOcr, 2000);
       } else {
-        document.getElementById('ocr-label').textContent = 'Name extraction complete ✓';
+        var spinner = document.getElementById('ocr-spinner');
+        var abortBtn = document.getElementById('ocr-abort-btn');
+        if (spinner) spinner.classList.add('d-none');
+        if (abortBtn) abortBtn.classList.add('d-none');
         document.getElementById('ocr-bar').classList.remove('progress-bar-animated', 'progress-bar-striped');
-        setTimeout(function() { banner.classList.add('d-none'); }, 3000);
+        document.getElementById('ocr-label').textContent = data.aborted
+          ? 'Extraction stopped — fill remaining names manually.'
+          : 'Name extraction complete ✓';
+        if (!data.aborted) setTimeout(function() { banner.classList.add('d-none'); }, 3000);
       }
     })
     .catch(function() { setTimeout(pollOcr, 3000); });
 })();
+
+function abortOcr() {
+  var btn = document.getElementById('ocr-abort-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Stopping…'; }
+  fetch('/upload-batch/ocr-abort/{{ review_id }}', { method: 'POST' })
+    .catch(function() {});
+}
 {% endif %}
 
 // ── Roster matching ──────────────────────────────────────────────────────────

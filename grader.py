@@ -27,6 +27,7 @@ import docx
 import ollama
 import pdfplumber
 import pypdfium2 as pdfium
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
@@ -288,6 +289,44 @@ def _render_page_png(pdf_path: str, page_num: int, scale: float = 2.0) -> bytes:
 
 
 
+def _cover_phash(pdf_path: str, hash_size: int = 8) -> int | None:
+    """Render cover page at low resolution and return a perceptual hash integer."""
+    try:
+        img_bytes = _render_page_png(pdf_path, 0, scale=0.3)
+        img = Image.open(io.BytesIO(img_bytes)).convert("L").resize(
+            (hash_size, hash_size), Image.LANCZOS
+        )
+        pixels = list(img.getdata())
+        avg    = sum(pixels) / len(pixels)
+        return sum(1 << i for i, p in enumerate(pixels) if p > avg)
+    except Exception:
+        return None
+
+
+def check_cover_consistency(exams: list) -> None:
+    """
+    Compare cover page perceptual hashes across all exams and flag outliers in-place.
+    Adds 'cover_flag': True to any exam whose cover differs significantly from the
+    majority. Runs entirely locally — no API calls. Modifies exams in-place.
+    """
+    if len(exams) < 2:
+        for exam in exams:
+            exam["cover_flag"] = False
+        return
+
+    THRESHOLD = 15  # Hamming distance out of 64 bits
+    hashes = [_cover_phash(exam["file_path"]) for exam in exams]
+    valid  = [(i, h) for i, h in enumerate(hashes) if h is not None]
+
+    for i, exam in enumerate(exams):
+        if hashes[i] is None:
+            exam["cover_flag"] = False
+            continue
+        distances = [bin(hashes[i] ^ h).count("1") for j, h in valid if j != i]
+        avg_dist  = sum(distances) / len(distances) if distances else 0
+        exam["cover_flag"] = avg_dist > THRESHOLD
+
+
 def read_name_sid_from_cover(file_path: str) -> dict:
     """
     Extract student name and SID from cover page (page 0) using a local Ollama
@@ -330,8 +369,11 @@ def _run_ocr_background(review_id: str, review_path: Path):
         data  = json.loads(review_path.read_text())
         total = len(data["exams"])
         with _ocr_jobs_lock:
-            _ocr_jobs[review_id] = {"total": total, "done": 0, "running": True}
+            _ocr_jobs[review_id] = {"total": total, "done": 0, "running": True, "aborted": False}
         for i, exam in enumerate(data["exams"]):
+            with _ocr_jobs_lock:
+                if _ocr_jobs[review_id].get("aborted"):
+                    break
             result       = read_name_sid_from_cover(exam["file_path"])
             exam["name"] = result["name"]
             exam["sid"]  = result["sid"]
@@ -1109,6 +1151,9 @@ def upload_batch():
             flash("No valid PDFs were uploaded.", "danger")
             return redirect(url_for("upload_batch"))
 
+        # Check cover page consistency across all exams (local, no API)
+        check_cover_consistency(all_exams)
+
         # Discard any existing review sessions before creating a new one
         for stale in DATA_DIR.glob("review_*.json"):
             try:
@@ -1171,6 +1216,15 @@ def ocr_status(review_id):
         except Exception:
             pass
     return jsonify({**job, "exams": exams})
+
+
+@app.route("/upload-batch/ocr-abort/<review_id>", methods=["POST"])
+def ocr_abort(review_id):
+    with _ocr_jobs_lock:
+        if review_id in _ocr_jobs and _ocr_jobs[review_id].get("running"):
+            _ocr_jobs[review_id]["aborted"] = True
+            return jsonify({"ok": True, "message": "Abort signal sent — stopping after current exam."})
+    return jsonify({"ok": False, "message": "No active OCR job for this session."})
 
 
 @app.route("/upload-batch/confirm/<review_id>", methods=["POST"])
