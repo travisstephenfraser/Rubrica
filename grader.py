@@ -1065,16 +1065,13 @@ def export():
 def upload_batch():
     if request.method == "POST":
         version        = request.form.get("version", "").strip().upper()
-        batch          = request.form.get("batch", "1").strip()
         pages_per_exam = request.form.get("pages_per_exam", "").strip()
-        file           = request.files.get("batch_pdf")
 
-        if not version or not file or not file.filename:
-            flash("Exam version and a batch PDF are required.", "danger")
+        if not version:
+            flash("Exam version is required.", "danger")
             return redirect(url_for("upload_batch"))
 
         try:
-            batch          = int(batch)
             pages_per_exam = int(pages_per_exam)
             if pages_per_exam < 1:
                 raise ValueError
@@ -1082,21 +1079,34 @@ def upload_batch():
             flash("Pages per exam must be a whole number of 1 or more.", "danger")
             return redirect(url_for("upload_batch"))
 
-        # Read uploaded file into memory so we never hold a file handle
-        pdf_bytes = file.read()
-        if not pdf_bytes:
-            flash("Uploaded file appears to be empty.", "danger")
-            return redirect(url_for("upload_batch"))
+        # Process up to 3 batch slots — each gets its own batch number
+        all_exams = []
+        for slot in range(1, 4):
+            file = request.files.get(f"batch_pdf_{slot}")
+            if not file or not file.filename:
+                continue
+            try:
+                batch_num = int(request.form.get(f"batch_{slot}", slot))
+            except ValueError:
+                batch_num = slot
 
-        # Split entirely in memory — no temp raw file needed
-        try:
-            exams = split_by_page_count_bytes(pdf_bytes, pages_per_exam, UPLOAD_DIR)
-        except Exception as e:
-            flash(f"Failed to split PDF: {e}", "danger")
-            return redirect(url_for("upload_batch"))
+            pdf_bytes = file.read()
+            if not pdf_bytes:
+                flash(f"Slot {slot} PDF is empty — skipped.", "warning")
+                continue
 
-        if not exams:
-            flash("The PDF appears to be empty or could not be split.", "danger")
+            try:
+                exams = split_by_page_count_bytes(pdf_bytes, pages_per_exam, UPLOAD_DIR)
+            except Exception as e:
+                flash(f"Failed to split slot {slot}: {e}", "danger")
+                continue
+
+            for exam in exams:
+                exam["batch"] = batch_num
+            all_exams.extend(exams)
+
+        if not all_exams:
+            flash("No valid PDFs were uploaded.", "danger")
             return redirect(url_for("upload_batch"))
 
         # Discard any existing review sessions before creating a new one
@@ -1111,7 +1121,7 @@ def upload_batch():
 
         # Store split results immediately — OCR runs in background if opted in
         review_id   = secrets.token_hex(8)
-        review_data = {"version": version, "batch": batch, "exams": exams}
+        review_data = {"version": version, "exams": all_exams}
         review_path = DATA_DIR / f"review_{review_id}.json"
         review_path.write_text(json.dumps(review_data))
 
@@ -1142,7 +1152,6 @@ def batch_review(review_id):
     return render_template("batch_review.html",
                            review_id=review_id,
                            version=data["version"],
-                           batch=data["batch"],
                            exams=data["exams"],
                            roster_count=roster_count,
                            ocr_running=ocr_running)
@@ -1189,14 +1198,14 @@ def batch_confirm(review_id):
         db.execute(
             "INSERT INTO exams (anon_id, student_name, student_sid, version, batch, file_path) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (anon_id, student_name, student_sid, data["version"], data["batch"], str(new_path))
+            (anon_id, student_name, student_sid, data["version"], exam["batch"], str(new_path))
         )
         saved += 1
 
     db.commit()
     review_path.unlink(missing_ok=True)
     flash(
-        f"{saved} exams saved → Version {data['version']} / Batch {data['batch']}.",
+        f"{saved} exams saved → Version {data['version']}.",
         "success"
     )
     return redirect(url_for("exams"))

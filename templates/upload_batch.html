@@ -1,48 +1,86 @@
 {% extends "base.html" %}
 {% block title %}Upload Batch PDF{% endblock %}
 {% block content %}
-<h2 class="mb-1">Upload Batch PDF</h2>
+<h2 class="mb-1">Upload Batch PDFs</h2>
 <p class="text-muted mb-4">
-  Upload a single PDF with all exams back-to-back. The app splits it by page count
-  instantly — then you assign student names on the next screen.
+  Upload up to 3 batch PDFs at once. Each is split by the same page count — then you assign student names on the next screen.
 </p>
 
 <div class="card border-0 shadow-sm">
   <div class="card-body">
     <form method="POST" enctype="multipart/form-data" id="batchForm">
 
+      <!-- Shared settings -->
       <div class="row g-3 mb-4">
-        <div class="col-md-3">
+        <div class="col-md-4">
           <label class="form-label fw-semibold">Exam Version <span class="text-danger">*</span></label>
           <input type="text" name="version" class="form-control" placeholder="e.g. a or b"
                  maxlength="5" required>
         </div>
-        <div class="col-md-3">
-          <label class="form-label fw-semibold">Batch Number <span class="text-danger">*</span></label>
-          <select name="batch" class="form-select">
-            <option value="1">Batch 1</option>
-            <option value="2">Batch 2</option>
-            <option value="3">Batch 3</option>
-            <option value="4">Batch 4</option>
-            <option value="5">Batch 5</option>
-          </select>
-        </div>
-        <div class="col-md-3">
+        <div class="col-md-4">
           <label class="form-label fw-semibold">Pages per exam <span class="text-danger">*</span></label>
           <input type="number" name="pages_per_exam" class="form-control"
                  min="1" max="100" placeholder="e.g. 8" required>
-          <div class="form-text">Pages in each individual exam.</div>
+          <div class="form-text">Same page count applied to all batches.</div>
         </div>
       </div>
 
+      <!-- Batch slots -->
       <div class="mb-4">
-        <label class="form-label fw-semibold">Batch PDF <span class="text-danger">*</span></label>
-        <input type="file" name="batch_pdf" class="form-control" accept=".pdf" required>
-        <div class="form-text">
-          All student exams concatenated into one PDF, in order.
+        <label class="form-label fw-semibold">Batch PDFs</label>
+
+        <!-- Batch 1 (required) -->
+        <div class="row g-2 align-items-center mb-2">
+          <div class="col-auto">
+            <select name="batch_1" class="form-select form-select-sm" style="width:120px">
+              <option value="1">Batch 1</option>
+              <option value="2">Batch 2</option>
+              <option value="3">Batch 3</option>
+              <option value="4">Batch 4</option>
+              <option value="5">Batch 5</option>
+            </select>
+          </div>
+          <div class="col">
+            <input type="file" name="batch_pdf_1" class="form-control form-control-sm" accept=".pdf" required>
+          </div>
+        </div>
+
+        <!-- Batch 2 (optional) -->
+        <div class="row g-2 align-items-center mb-2">
+          <div class="col-auto">
+            <select name="batch_2" class="form-select form-select-sm" style="width:120px">
+              <option value="1">Batch 1</option>
+              <option value="2" selected>Batch 2</option>
+              <option value="3">Batch 3</option>
+              <option value="4">Batch 4</option>
+              <option value="5">Batch 5</option>
+            </select>
+          </div>
+          <div class="col">
+            <input type="file" name="batch_pdf_2" class="form-control form-control-sm" accept=".pdf">
+          </div>
+          <div class="col-auto text-muted small">optional</div>
+        </div>
+
+        <!-- Batch 3 (optional) -->
+        <div class="row g-2 align-items-center mb-2">
+          <div class="col-auto">
+            <select name="batch_3" class="form-select form-select-sm" style="width:120px">
+              <option value="1">Batch 1</option>
+              <option value="2">Batch 2</option>
+              <option value="3" selected>Batch 3</option>
+              <option value="4">Batch 4</option>
+              <option value="5">Batch 5</option>
+            </select>
+          </div>
+          <div class="col">
+            <input type="file" name="batch_pdf_3" class="form-control form-control-sm" accept=".pdf">
+          </div>
+          <div class="col-auto text-muted small">optional</div>
         </div>
       </div>
 
+      <!-- OCR opt-in -->
       <div class="mb-3">
         <div class="form-check">
           <input class="form-check-input" type="checkbox" name="run_ocr" value="1"
@@ -64,7 +102,7 @@
         <button type="submit" class="btn btn-primary px-4">Upload &amp; Split</button>
         <span id="spinner" class="text-muted d-none">
           <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-          Splitting PDF &amp; extracting names — please wait…
+          Splitting PDFs — please wait…
         </span>
       </div>
 
@@ -80,7 +118,6 @@
 <script>
   document.getElementById('batchForm').addEventListener('submit', function () {
     document.getElementById('spinner').classList.remove('d-none');
-    // Don't disable the submit button here — that can block submission in some browsers
   });
 
   function launchOllama() {
