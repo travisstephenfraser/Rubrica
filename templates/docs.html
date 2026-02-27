@@ -262,18 +262,15 @@
     <h2>Data Flow — End to End</h2>
 
     <div class="flow-step"><div class="flow-num">1</div>
-      <div><strong>Batch PDF uploaded.</strong> All student exams concatenated into one file, in order.</div></div>
+      <div><strong>Batch PDFs uploaded.</strong> Up to 3 batch PDFs at once, each with its own batch number. All student exams concatenated within each file, in order.</div></div>
 
     <div class="flow-step"><div class="flow-num">2</div>
       <div><strong>Split by fixed page count — entirely in memory.</strong>
-      No file handles held open (avoids Windows file-locking), no Claude API calls, no cost.</div></div>
+      All batches split and merged into one review session in a single pass. No file handles held open, no Claude API calls, no cost. A perceptual hash (8×8 phash) of each cover page is computed locally to flag any exam whose layout differs structurally from the majority.</div></div>
 
     <div class="flow-step"><div class="flow-num">3</div>
       <div><strong>Name extraction + review page.</strong> Ollama (<code>{{ ollama_model }}</code>) reads each cover page (page 0)
-      locally and pre-fills student name and SID. A thumbnail and full-page modal viewer let you verify
-      all pages are attached and correct any misreads before confirming. Names and SIDs can be
-      toggled hidden during the review session (opacity-only — data always present). Roster
-      fuzzy-match available if a class list has been uploaded.</div></div>
+      locally in a background thread and pre-fills student name and SID with live progress. Extraction is opt-in (skip on CPU-only machines) and can be aborted mid-run — names extracted so far are preserved. A thumbnail and full-page modal viewer let you verify all pages are attached and correct any misreads before confirming. Roster fuzzy-match available if a class list has been uploaded. A persistent Review nav tab allows returning to an in-progress session from anywhere in the app.</div></div>
 
     <div class="flow-step"><div class="flow-num">4</div>
       <div><strong>Saved to SQLite.</strong> Each exam gets a random <code>anon_id</code>.
@@ -307,10 +304,13 @@
 
     <h3>Upload &amp; Splitting</h3>
     <ul>
-      <li>Upload one combined PDF → specify pages-per-exam → splits instantly (no API cost).</li>
+      <li>Upload up to 3 batch PDFs at once — each with its own batch number; version and pages-per-exam are shared.</li>
+      <li>All batches split and merged into one review session in a single pass (no API cost).</li>
       <li>Single-exam upload: set pages-per-exam equal to the exam page count.</li>
-      <li>Name assignment page shows a cover-page thumbnail per exam and a full modal page viewer.</li>
-      <li>Ollama (<code>{{ ollama_model }}</code>) reads each cover page locally to pre-fill student name and SID — no API cost, no data leaves the machine.</li>
+      <li><strong>Cover page consistency check</strong> — after split, a perceptual hash (8×8 phash, Hamming distance threshold 15/64) compares all cover pages locally. Outliers get a yellow thumbnail border and ⚠ Cover badge. Runs on-device, no API.</li>
+      <li>Name assignment page shows a cover-page thumbnail per exam, batch number column, and a full modal page viewer.</li>
+      <li>Ollama (<code>{{ ollama_model }}</code>) reads each cover page locally in a background thread to pre-fill student name and SID — no API cost, no data leaves the machine. Opt-in checkbox to skip on CPU-only machines. Abortable mid-run via Stop button.</li>
+      <li>A <strong>Review</strong> nav tab appears between Upload and Exams whenever an unsaved session exists — survives page navigation and app restarts.</li>
       <li>Roster fuzzy-match confirms identity against an uploaded class list (local only, no API).</li>
       <li>Names and SIDs can be hidden during review with a toggle — values are always preserved in the form and submitted correctly.</li>
       <li>Cover page blurs automatically in the full-page review modal when Private Mode is active.</li>
