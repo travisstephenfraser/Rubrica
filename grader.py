@@ -6,15 +6,16 @@ Only anonymous IDs + exam text + rubric are transmitted.
 """
 
 import base64
+import concurrent.futures
 import csv
 import difflib
 import io
 import json
+import logging
 import os
 import secrets
 import sqlite3
 import statistics as _stats
-import queue
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ import docx
 import ollama
 import pdfplumber
 import pypdfium2 as pdfium
-from PIL import Image
+from PIL import Image, ImageEnhance
 from pypdf import PdfReader, PdfWriter
 from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
@@ -53,6 +54,13 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 RUBRIC_DIR.mkdir(exist_ok=True)
+
+# Persistent file logger — survives app restarts
+_log = logging.getLogger("rubrica")
+_log.setLevel(logging.INFO)
+_log_handler = logging.FileHandler(DATA_DIR / "grading.log", encoding="utf-8")
+_log_handler.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s  %(message)s"))
+_log.addHandler(_log_handler)
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -85,7 +93,7 @@ def toggle_private_mode():
 # ---------------------------------------------------------------------------
 _grade_job: dict   = {"running": False, "total": 0, "done": 0, "failed": 0, "errors": []}
 _grade_lock        = threading.Lock()
-_grade_queue: queue.Queue = queue.Queue()
+GRADE_WORKERS      = 5  # concurrent grading threads
 
 # Background OCR job state (keyed by review_id)
 _ocr_jobs: dict    = {}
@@ -380,8 +388,11 @@ def _run_ocr_background(review_id: str, review_path: Path):
             review_path.write_text(json.dumps(data))
             with _ocr_jobs_lock:
                 _ocr_jobs[review_id]["done"] = i + 1
-    except Exception:
-        pass
+    except Exception as e:
+        _log.error("OCR failed for review %s: %s", review_id, e)
+        with _ocr_jobs_lock:
+            if review_id in _ocr_jobs:
+                _ocr_jobs[review_id]["error"] = str(e)
     finally:
         with _ocr_jobs_lock:
             if review_id in _ocr_jobs:
@@ -632,6 +643,11 @@ def _grade_exam(exam_row, rubric) -> dict:
     exam_blocks = []
     for page_num in range(1, total):
         img_bytes = _render_page_png(exam_row["file_path"], page_num)
+        img = Image.open(io.BytesIO(img_bytes))
+        img = ImageEnhance.Contrast(img).enhance(2.0)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        img_bytes = buf.getvalue()
         b64       = base64.standard_b64encode(img_bytes).decode()
         exam_blocks.append({
             "type": "image",
@@ -663,6 +679,7 @@ Grading instructions:
 - The rubric is provided at the start of the user message.
 - Read the handwritten answers directly from the exam page images.
 - Grade each question strictly according to the rubric.
+- Some answers may be written in faint pencil — examine the image carefully before concluding a question is blank or unanswered.
 - Be fair and consistent. Do not infer the student's identity.
 
 MULTIPLE CHOICE instructions (critical):
@@ -683,6 +700,15 @@ QUESTION CONSOLIDATION (critical):
 - Use the question number only (e.g. "Q3", "Q22") — never "Q3a", "Q3b", "Q22a", etc.
 - Include feedback for all sub-parts combined in the single feedback string.
 
+FEEDBACK TONE (critical):
+- Write feedback as a professor would on a graded exam — definitive, concise, and authoritative.
+- State what is correct or incorrect directly. Never hedge, self-correct, or show reasoning process.
+- NEVER use phrases like "wait", "actually", "let me reconsider", "on second thought", "hmm", or similar deliberation language.
+- If you are uncertain about a reading, make your best judgment and commit to it. Do not narrate your uncertainty.
+- Good: "Correct application of the Coase theorem."
+- Good: "Incorrect — confused fixed and variable costs in the calculation."
+- Bad: "Wait, actually I think the student might have meant... let me look again..."
+
 - Respond ONLY with valid JSON in exactly this format:
 {{
   "anon_id": "{exam_row["anon_id"]}",
@@ -696,29 +722,47 @@ QUESTION CONSOLIDATION (critical):
 }}"""
 
     client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    with client.messages.stream(
-        model=CLAUDE_MODEL,
-        max_tokens=8192,
-        system=system_prompt,
-        messages=[{"role": "user", "content": content}],
-    ) as stream:
-        full_response = stream.get_final_message()
 
-    if full_response.stop_reason == "max_tokens":
-        raise ValueError("Response was cut off (max_tokens reached). The exam may be too long.")
+    MAX_ATTEMPTS = 2
+    last_error = None
+    data = None
 
-    response_text = ""
-    for block in full_response.content:
-        if block.type == "text":
-            response_text = block.text
-            break
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        with client.messages.stream(
+            model=CLAUDE_MODEL,
+            max_tokens=8192,
+            temperature=0.0,
+            system=system_prompt,
+            messages=[{"role": "user", "content": content}],
+        ) as stream:
+            full_response = stream.get_final_message()
 
-    start = response_text.find("{")
-    end   = response_text.rfind("}") + 1
-    if start == -1 or end == 0:
-        raise ValueError(f"No JSON found. Claude responded with: {response_text[:500]}")
+        if full_response.stop_reason == "max_tokens":
+            raise ValueError("Response was cut off (max_tokens reached). The exam may be too long.")
 
-    data = json.loads(response_text[start:end])
+        response_text = ""
+        for block in full_response.content:
+            if block.type == "text":
+                response_text = block.text
+                break
+
+        start = response_text.find("{")
+        end   = response_text.rfind("}") + 1
+        if start == -1 or end == 0:
+            last_error = ValueError(f"No JSON found. Claude responded with: {response_text[:500]}")
+            _log.warning("Attempt %d/%d for %s: no JSON in response", attempt, MAX_ATTEMPTS, exam_row["anon_id"])
+            continue
+
+        try:
+            data = json.loads(response_text[start:end])
+            break  # success
+        except json.JSONDecodeError as e:
+            last_error = e
+            _log.warning("Attempt %d/%d for %s: malformed JSON — %s", attempt, MAX_ATTEMPTS, exam_row["anon_id"], e)
+            continue
+
+    if data is None:
+        raise last_error or ValueError("Grading failed: no valid response after retries")
 
     # Consolidate any sub-part rows (e.g. "Q3a", "Q3 (a)", "Q3-a") into their parent
     # question ("Q3") by summing points and concatenating feedback.
@@ -785,57 +829,70 @@ QUESTION CONSOLIDATION (critical):
     return data
 
 
-def _run_grade_worker():
-    """Background thread: drains _grade_queue until empty for 2 seconds."""
+def _grade_one_worker(anon_id: str):
+    """Grade a single exam. Called by ThreadPoolExecutor — each call gets its own DB connection."""
     conn = sqlite3.connect(str(DB_PATH), detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     try:
-        while True:
-            try:
-                anon_id = _grade_queue.get(timeout=2)
-            except queue.Empty:
-                break
-            try:
-                exam = conn.execute(
-                    "SELECT * FROM exams WHERE anon_id=?", (anon_id,)
-                ).fetchone()
-                rubric = conn.execute(
-                    "SELECT * FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
-                    (exam["version"],)
-                ).fetchone()
-                if not rubric:
-                    raise ValueError(f"No rubric for Version {exam['version']}")
-                grade_data = _grade_exam(exam, rubric)
-                conn.execute(
-                    "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-                    (json.dumps(grade_data), datetime.utcnow(), anon_id)
-                )
-                conn.commit()
-                with _grade_lock:
-                    _grade_job["done"] += 1
-            except Exception as e:
-                with _grade_lock:
-                    _grade_job["failed"] += 1
-                    _grade_job["errors"].append(f"{anon_id}: {str(e)[:120]}")
-            _grade_queue.task_done()
+        exam = conn.execute(
+            "SELECT * FROM exams WHERE anon_id=?", (anon_id,)
+        ).fetchone()
+        if not exam:
+            raise ValueError(f"Exam {anon_id} not found")
+
+        # Resume safety: skip if already graded (e.g. by another route mid-batch)
+        if exam["grade_data"] is not None:
+            _log.info("Skipping %s — already graded", anon_id)
+            with _grade_lock:
+                _grade_job["done"] += 1
+            return
+
+        rubric = conn.execute(
+            "SELECT * FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
+            (exam["version"],)
+        ).fetchone()
+        if not rubric:
+            raise ValueError(f"No rubric for Version {exam['version']}")
+
+        grade_data = _grade_exam(exam, rubric)
+        conn.execute(
+            "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
+            (json.dumps(grade_data), datetime.utcnow(), anon_id)
+        )
+        conn.commit()
+        _log.info("Graded %s — %.1f/%d", anon_id,
+                  grade_data.get("total_earned", 0), grade_data.get("total_possible", 0))
+        with _grade_lock:
+            _grade_job["done"] += 1
+    except Exception as e:
+        _log.error("Grading failed for %s: %s", anon_id, e)
+        with _grade_lock:
+            _grade_job["failed"] += 1
+            _grade_job["errors"].append(f"{anon_id}: {str(e)[:120]}")
     finally:
         conn.close()
+
+
+def _run_grade_pool(anon_ids: list):
+    """Background thread: grades all exams using a thread pool."""
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=GRADE_WORKERS) as pool:
+            pool.map(_grade_one_worker, anon_ids)
+    finally:
         with _grade_lock:
             _grade_job["running"] = False
 
 
 def _enqueue_and_start(anon_ids: list):
-    """Add exam IDs to the grading queue, starting the worker thread if needed."""
+    """Start parallel grading for the given exam IDs."""
     global _grade_job
-    for aid in anon_ids:
-        _grade_queue.put(aid)
     with _grade_lock:
         if _grade_job["running"]:
-            _grade_job["total"] += len(anon_ids)
-        else:
-            _grade_job = {"running": True, "total": len(anon_ids),
-                          "done": 0, "failed": 0, "errors": []}
-            threading.Thread(target=_run_grade_worker, daemon=True).start()
+            # Already running — don't start a second pool
+            return
+        _grade_job = {"running": True, "total": len(anon_ids),
+                      "done": 0, "failed": 0, "errors": []}
+    threading.Thread(target=_run_grade_pool, args=(anon_ids,), daemon=True).start()
 
 
 @app.route("/grade/<anon_id>", methods=["POST"])
@@ -1720,11 +1777,19 @@ def analytics():
 
 @app.route("/launch-ollama", methods=["POST"])
 def launch_ollama():
-    import subprocess, shutil
+    import subprocess, shutil, urllib.request
     ollama_path = shutil.which("ollama") or r"C:\Users\tfras\AppData\Local\Programs\Ollama\ollama.exe"
+
+    # Check if already running
+    try:
+        urllib.request.urlopen("http://localhost:11434/api/version", timeout=2)
+        return {"ok": True, "message": "Ollama is already running."}
+    except Exception:
+        pass
+
     try:
         subprocess.Popen(
-            [ollama_path],
+            [ollama_path, "serve"],
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

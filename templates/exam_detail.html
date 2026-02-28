@@ -124,8 +124,7 @@ const privateMode = {{ 'true' if private_mode else 'false' }};
 
 function showPage(num) {
   const img = document.getElementById('page-img');
-  if (privateMode && num === 0) img.classList.add('cover-blurred');
-  img.onload = () => { img.classList.toggle('cover-blurred', num === 0 && privateMode); img.onload = null; };
+  img.classList.toggle('cover-blurred', num === 0 && privateMode);
   img.src = `/exam/${anonId}/page/${num}`;
   document.getElementById('page-label').textContent = num === 0
     ? 'Cover page — not sent to Claude during grading'
