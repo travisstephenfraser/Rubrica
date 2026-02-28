@@ -109,7 +109,7 @@
   <h1 class="display-6 fw-bold mb-1" style="font-family:system-ui,sans-serif;">
     ✒ Rubrica
   </h1>
-  <p>Privacy-First AI Exam Grading &mdash; UC Berkeley Haas</p>
+  <p>Privacy-First AI Exam Grading - UC Berkeley Haas</p>
 </div>
 
 <div class="container" style="max-width:860px;">
@@ -248,7 +248,7 @@
         {% if build_info %}
         <tr><td>Build</td><td>
           <code>{{ build_info.commit }}</code>
-          &mdash; {{ build_info.branch }} &mdash; {{ build_info.date }}
+          - {{ build_info.branch }} - {{ build_info.date }}
         </td></tr>
         {% endif %}
         <tr><td>UI framework</td><td>Bootstrap 5 — served from CDN</td></tr>
@@ -277,13 +277,15 @@
       The student name is stored locally only — never included in any API call.</div></div>
 
     <div class="flow-step"><div class="flow-num">5</div>
-      <div><strong>Grade All triggered.</strong> A background thread is spawned so the browser tab
-      stays usable. A live progress bar polls <code>/grade-all/status</code> every 3 seconds.</div></div>
+      <div><strong>Grade All triggered.</strong> A thread pool (5 concurrent workers) is spawned so
+      exams grade in parallel. Already-graded exams are skipped automatically. A live progress bar
+      polls <code>/grade-all/status</code> every 3 seconds.</div></div>
 
     <div class="flow-step"><div class="flow-num">6</div>
-      <div><strong>Per-exam grading.</strong> Pages 1+ rendered as PNG at 2× scale and sent to
-      Claude Sonnet as images. The rubric PDF is sent as a native base64 document block
-      (preserves tables and charts). Cover page always skipped.</div></div>
+      <div><strong>Per-exam grading.</strong> Pages 1+ rendered as PNG at 2x scale, contrast-enhanced (2x boost
+      for faint pencil legibility), and sent to Claude Sonnet as images. The rubric PDF is sent as a native
+      base64 document block (preserves tables and charts). Cover page always skipped. If Claude returns
+      malformed JSON, the call retries once automatically.</div></div>
 
     <div class="flow-step"><div class="flow-num">7</div>
       <div><strong>Claude returns structured JSON.</strong> Question-level scores, feedback,
@@ -328,9 +330,16 @@
 
     <h3>Vision Grading Engine</h3>
     <ul>
-      <li>Exam pages rendered as PNG and sent directly to Claude Sonnet — works on handwritten answers with no OCR pre-processing required.</li>
+      <li>Exam pages rendered as PNG and sent directly to Claude Sonnet - works on handwritten answers with no OCR pre-processing required.</li>
+      <li><strong>Faint pencil handling:</strong> 2x contrast enhancement applied to every page image before sending to Claude; prompt instructs careful examination before concluding a question is blank.</li>
+      <li><strong>Parallel grading:</strong> 5 concurrent workers grade exams simultaneously via ThreadPoolExecutor - batch grading runs ~5x faster with the same API cost.</li>
+      <li><strong>Deterministic output:</strong> <code>temperature=0.0</code> ensures identical exams receive identical scores across grading runs.</li>
+      <li><strong>Feedback sanitizer:</strong> post-processing strips AI deliberation language ("wait", "actually", "let me re-read") and replaces em/en dashes with regular dashes in all feedback - deterministic regex, runs on every grading response.</li>
+      <li><strong>JSON retry:</strong> if Claude returns malformed JSON, the grading call retries once automatically (max 2 attempts, hard-capped).</li>
+      <li><strong>Batch resume:</strong> re-running Grade All skips already-graded exams before calling the API - no duplicate API spend.</li>
       <li>Cover page (page 0) always skipped; answer pages only sent to Claude.</li>
-      <li>Background thread with live progress bar — browser stays usable during long grading runs.</li>
+      <li>Background thread with live progress bar - browser stays usable during long grading runs.</li>
+      <li><strong>Persistent logging:</strong> all grading successes, failures, and retries written to <code>data/grading.log</code> - survives app restarts.</li>
       <li>Filter by version and batch for targeted re-grading.</li>
       <li>Per-exam re-grade and clear-grade buttons; bulk clear-all-grades option.</li>
     </ul>
@@ -423,7 +432,8 @@ roster (
 ├── data/
 │   ├── exam_grader.db       # SQLite: all name↔ID mappings + grade data
 │   ├── uploads/             # Individual exam PDFs named by anon_id  ({{ upload_mb }} MB)
-│   └── rubrics/             # Original rubric files — {{ rubric_file_count }} file{{ 's' if rubric_file_count != 1 else '' }} on disk
+│   ├── rubrics/             # Original rubric files — {{ rubric_file_count }} file{{ 's' if rubric_file_count != 1 else '' }} on disk
+│   └── grading.log          # Persistent log of grading successes, failures, and retries
 └── templates/
     ├── base.html             # Bootstrap navbar + layout shell (Private Mode toggle lives here)
     ├── index.html            # Dashboard (counts, quick links, Private Mode card)

@@ -32,6 +32,11 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Analytics** — grade distribution histogram, letter grade donut chart, per-question average score bar chart with per-version filter, automatic low-performance alerts
 - **Student reports** — printable per-student report with score card, progress bar, and question breakdown
 - **Export to CSV** — summary (one row per student) and detailed (one column per question) formats
+- **Parallel grading** — 5 concurrent workers grade exams simultaneously; ~5x faster batch processing with the same API cost
+- **Faint pencil handling** — 2x contrast enhancement on exam page images + prompt tuning for faint handwriting
+- **Feedback sanitizer** — deterministic post-processing strips AI deliberation language ("wait", "actually", "let me re-read") and em/en dashes from all feedback before saving
+- **JSON retry** — automatically retries once if Claude returns malformed JSON, with persistent error logging to `data/grading.log`
+- **Batch resume** — re-running Grade All safely skips already-graded exams; no duplicate API calls
 - **Live progress** — background grading thread with a live progress bar that persists across page navigation; dismisses cleanly and reappears only when a new grading session starts
 - **Select Ungraded** — one-click button to check all ungraded exams at once, surfacing the Grade Selected toolbar for batch grading without manual selection
 - **Grade management** — grade individual exams, re-grade, or clear grades per-exam or all at once
