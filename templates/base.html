@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="{{ 'dark' if dark_mode else 'light' }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Rubrica{% endblock %}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { background: #f8f9fa; }
+    [data-bs-theme="light"] body { background: #f8f9fa; }
+    [data-bs-theme="dark"] body { background: #1a1a2e; }
     .navbar-brand { font-weight: 700; letter-spacing: 1px; }
     .privacy-badge {
       background: #198754; color: #fff;
@@ -19,6 +20,12 @@
       border-radius: 12px; font-weight: 700; letter-spacing: .05em;
     }
     .anon-id { font-family: monospace; font-size: 1.1em; letter-spacing: .1em; }
+    /* Dark mode overrides for hardcoded light backgrounds */
+    [data-bs-theme="dark"] .bg-white { background-color: var(--bs-body-bg) !important; }
+    [data-bs-theme="dark"] .bg-light { background-color: var(--bs-tertiary-bg) !important; }
+    [data-bs-theme="dark"] .card { border-color: var(--bs-border-color); }
+    [data-bs-theme="dark"] .table { color: var(--bs-body-color); }
+    [data-bs-theme="dark"] .text-dark { color: var(--bs-body-color) !important; }
   </style>
   {% block extra_head %}{% endblock %}
 </head>
@@ -50,7 +57,13 @@
       <a class="nav-link" href="/roster" style="color:#6dc8b8 !important">Roster</a>
       <a class="nav-link" href="/analytics" style="color:#6dc8b8 !important">Analytics</a>
     </div>
-    <form method="POST" action="/toggle-private-mode" class="ms-3">
+    <form method="POST" action="/toggle-dark-mode" class="ms-3">
+      <input type="hidden" name="next" value="{{ request.url }}">
+      <button type="submit" class="btn btn-outline-secondary btn-sm">
+        {% if dark_mode %}☀{% else %}🌙{% endif %}
+      </button>
+    </form>
+    <form method="POST" action="/toggle-private-mode" class="ms-2">
       <input type="hidden" name="next" value="{{ request.url }}">
       {% if private_mode %}
         <button type="submit" class="btn btn-danger btn-sm">Disable Private Mode</button>

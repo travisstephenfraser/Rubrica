@@ -72,6 +72,17 @@ def inject_private_mode():
 
 
 @app.context_processor
+def inject_dark_mode():
+    return {"dark_mode": session.get("dark_mode", False)}
+
+
+@app.route("/toggle-dark-mode", methods=["POST"])
+def toggle_dark_mode():
+    session["dark_mode"] = not session.get("dark_mode", False)
+    return redirect(request.form.get("next") or request.referrer or "/")
+
+
+@app.context_processor
 def inject_active_review():
     review_files = sorted(DATA_DIR.glob("review_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not review_files:
