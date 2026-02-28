@@ -39,6 +39,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Batch resume** — re-running Grade All safely skips already-graded exams; no duplicate API calls
 - **Live progress** — background grading thread with a live progress bar that persists across page navigation; dismisses cleanly and reappears only when a new grading session starts
 - **Select Ungraded** — one-click button to check all ungraded exams at once, surfacing the Grade Selected toolbar for batch grading without manual selection
+- **Dark mode** — session-persisted toggle in the navbar; Bootstrap 5 `data-bs-theme` with softened table/card header backgrounds
 - **Grade management** — grade individual exams, re-grade, or clear grades per-exam or all at once
 - **Results navigation** — Expand/Collapse All details, Review exam link, and Back to Results from any exam detail page
 - **Built-in docs** — full system documentation at `/docs`, printable as PDF
