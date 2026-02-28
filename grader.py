@@ -796,6 +796,37 @@ FEEDBACK TONE (critical):
             for k, v in [(k, merged[k]) for k in order]
         ]
 
+    # Strip deliberation / thinking-out-loud language from feedback.
+    # Claude sometimes leaks its reasoning process ("Wait —", "Actually,", "Let me
+    # re-read...") into feedback strings despite prompt instructions. This regex-based
+    # pass is deterministic: if a sentence matches, it's removed. Scores are unaffected.
+    _DELIBERATION = re.compile(
+        r'\b(wait|actually|hmm|let me re-?(?:read|check|count|examine)|'
+        r'on second thought|re-?reading|I (?:think|miscounted|need to)|'
+        r'looking (?:again|more carefully)|hold on|scratch that|'
+        r'no,|correction:|upon (?:closer|further))\b',
+        re.IGNORECASE,
+    )
+
+    def _clean_feedback(text: str) -> str:
+        if not text:
+            return text
+        # Replace em dashes with regular dashes (AI tell)
+        text = text.replace("\u2014", "-").replace("\u2013", "-")
+        # Split on sentence boundaries, keep only clean sentences
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        clean = [s for s in sentences if not _DELIBERATION.search(s)]
+        result = " ".join(clean).strip()
+        # If everything was stripped, keep last sentence as fallback (the final answer)
+        return result if result else sentences[-1].strip()
+
+    if data.get("scores"):
+        for s in data["scores"]:
+            if s.get("feedback"):
+                s["feedback"] = _clean_feedback(s["feedback"])
+    if data.get("overall_feedback"):
+        data["overall_feedback"] = _clean_feedback(data["overall_feedback"])
+
     # Recalculate total_earned from individual scores — Claude's summary total sometimes
     # diverges from its own per-question scores due to rounding (e.g. 18 × 3.33 = 59.94
     # instead of 60).  Keep total_possible as Claude reported it (correctly read from the
