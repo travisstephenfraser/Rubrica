@@ -75,6 +75,9 @@
   <button id="grade-selected-btn" class="btn btn-success btn-sm" disabled>
     ▶ Grade Selected
   </button>
+  <button id="remove-selected-btn" class="btn btn-outline-danger btn-sm" disabled>
+    Remove Selected
+  </button>
   <button type="button" id="deselect-all-btn" class="btn btn-outline-secondary btn-sm ms-auto">
     Clear selection
   </button>
@@ -164,6 +167,7 @@
   var selBar           = document.getElementById('grade-selected-bar');
   var selCount         = document.getElementById('selected-count');
   var gradeSelBtn      = document.getElementById('grade-selected-btn');
+  var removeSelBtn     = document.getElementById('remove-selected-btn');
   var deselectBtn      = document.getElementById('deselect-all-btn');
   var selectUngradedBtn = document.getElementById('select-ungraded-btn');
 
@@ -175,6 +179,7 @@
     var n = getChecked().length;
     selCount.textContent = n + ' selected';
     gradeSelBtn.disabled = (n === 0);
+    removeSelBtn.disabled = (n === 0);
     if (n > 0) selBar.classList.remove('d-none');
     else selBar.classList.add('d-none');
   }
@@ -249,6 +254,33 @@
         gradeSelBtn.disabled = false;
       }
     });
+  });
+
+  // Remove Selected button
+  removeSelBtn.addEventListener('click', function () {
+    var ids = getChecked().map(function (cb) { return cb.value; });
+    if (ids.length === 0) return;
+    if (!confirm('Remove ' + ids.length + ' selected exam(s)? This permanently deletes the PDFs and cannot be undone.')) return;
+    removeSelBtn.disabled = true;
+    removeSelBtn.textContent = 'Removing…';
+    var fd = new FormData();
+    ids.forEach(function (id) { fd.append('anon_ids', id); });
+    fetch('/delete-selected', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          alert(data.error);
+          removeSelBtn.disabled = false;
+          removeSelBtn.textContent = 'Remove Selected';
+        } else {
+          location.reload();
+        }
+      })
+      .catch(function () {
+        alert('Failed to remove exams. Please try again.');
+        removeSelBtn.disabled = false;
+        removeSelBtn.textContent = 'Remove Selected';
+      });
   });
 
   // Individual Grade / Re-grade buttons

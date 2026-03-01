@@ -648,6 +648,28 @@ def delete_exam(anon_id):
     return redirect(url_for("exams"))
 
 
+@app.route("/delete-selected", methods=["POST"])
+def delete_selected():
+    anon_ids = request.form.getlist("anon_ids")
+    if not anon_ids:
+        return jsonify({"error": "No exams selected."}), 400
+    db = get_db()
+    removed, failed = 0, 0
+    for aid in anon_ids:
+        exam = db.execute("SELECT * FROM exams WHERE anon_id=?", (aid,)).fetchone()
+        if not exam:
+            continue
+        try:
+            Path(exam["file_path"]).unlink(missing_ok=True)
+        except Exception as e:
+            app.logger.warning(f"Could not delete file for {aid}: {e}")
+            failed += 1
+        db.execute("DELETE FROM exams WHERE anon_id=?", (aid,))
+        removed += 1
+    db.commit()
+    return jsonify({"removed": removed, "failed": failed})
+
+
 # ---------------------------------------------------------------------------
 # Routes: OCR
 # ---------------------------------------------------------------------------
