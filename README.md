@@ -32,9 +32,12 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Analytics** — grade distribution histogram, letter grade donut chart, per-question average score bar chart with per-version filter, automatic low-performance alerts
 - **Student reports** — printable per-student report with score card, progress bar, and question breakdown
 - **Export to CSV** — summary (one row per student) and detailed (one column per question) formats
-- **Parallel grading** — 5 concurrent workers grade exams simultaneously; ~5x faster batch processing with the same API cost
+- **Parallel grading** — 5 concurrent workers grade exams simultaneously with WAL-mode SQLite for safe concurrent writes; ~5x faster batch processing with the same API cost
+- **API resilience** — shared Anthropic client with 5-minute request timeout and 10-second connect timeout; prevents worker deadlock on hung connections
 - **Faint pencil handling** — 2x contrast enhancement on exam page images + prompt tuning for faint handwriting
 - **Feedback sanitizer** — deterministic post-processing strips AI deliberation language ("wait", "actually", "let me re-read") and em/en dashes from all feedback before saving
+- **Input validation** — review session IDs validated against expected format on all routes; error messages sanitized to avoid leaking API internals
+- **Upload size limit** — 500 MB cap per batch PDF; oversized files are skipped with a warning
 - **JSON retry** — automatically retries once if Claude returns malformed JSON, with persistent error logging to `data/grading.log`
 - **Batch resume** — re-running Grade All safely skips already-graded exams; no duplicate API calls
 - **Live progress** — background grading thread with a live progress bar that persists across page navigation; dismisses cleanly and reappears only when a new grading session starts
@@ -56,7 +59,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 | PDF handling | pypdf, pdfplumber |
 | Document parsing | python-docx |
 | Environment | python-dotenv |
-| Database | SQLite (local) |
+| Database | SQLite (WAL mode, local) |
 | Frontend | Bootstrap 5 + Chart.js 4 |
 
 ---
@@ -81,6 +84,7 @@ Create a `.env` file in the project root with your API key:
 
 ```
 ANTHROPIC_API_KEY=your_key_here
+OLLAMA_EXE=C:\path\to\ollama.exe   # optional, only if ollama is not in PATH
 ```
 
 Run the app:
