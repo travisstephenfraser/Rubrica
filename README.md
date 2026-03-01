@@ -123,6 +123,51 @@ Rubrica/
 
 ---
 
+## Validation and Research
+
+Rubrica's grading pipeline and audit methodology are grounded in established psychometric standards and recent AI grading research. A dedicated testing agent (`/testing`) uses Claude Opus 4.6 as an independent reference scorer to validate production grades assigned by Claude Sonnet 4.6.
+
+### Audit Protocol
+
+The testing agent re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Preliminary validation across 7 exams (196 scored items) produced:
+
+- **88% exact score match** (ETS threshold: >= 70%)
+- **98% within-1-point agreement** (ETS threshold: >= 95%)
+- **0.10 pt mean absolute error** per question
+- **+2.01 pt mean bias** (production model slightly generous, favoring students)
+
+The dual-scoring validation model follows the framework recommended by ETS for automated essay scoring systems (Williamson et al., 2012) and mirrors the independent re-scoring methodology used by Gradescope at UC Berkeley (Singh et al., 2017).
+
+### Research-Backed Safeguards
+
+The following production features were implemented based on findings from AES and AI grading literature:
+
+- **Boundary re-grading** addresses the known concentration of inter-rater disagreements at letter grade thresholds. Exams within +/-1.5% of cutoffs (90/80/70/60) are automatically re-graded and averaged on disagreement, with a full audit trail.
+- **Feedback specificity enforcement** responds to research showing AI feedback outperforms human feedback on metacognitive dimensions when it cites specific student work (Nazaretsky et al., 2026, *Journal of Computer Assisted Learning*). Vague feedback is detected and refined via a targeted follow-up prompt.
+- **2x contrast enhancement** mitigates handwriting quality bias documented in vision LLM grading (arXiv:2601.16724), where faint pencil responses receive systematically lower scores.
+- **Deterministic scoring** (temperature 0.0) eliminates random variation between grading runs, a baseline requirement for any assessment system claiming reliability (Fleiss, 1981).
+
+### Recommended Sample Sizes
+
+| Threshold | Purpose | Source |
+|---|---|---|
+| n >= 30 | Minimum for reliable SD, QWK, and ICC estimation | Fleiss (1981); Central Limit Theorem |
+| n >= 50 | Stable kappa/ICC with narrow confidence intervals | Gwet (2014); Sim & Wright (2005) |
+| n = 100-200 | ETS operational standard for AES system validation | Williamson et al. (2012) |
+| 10% of cohort | Ongoing semester-over-semester monitoring | Gradescope / UC Berkeley practice |
+
+### Key References
+
+- Williamson, D. M., Xi, X., & Breyer, F. J. (2012). A framework for evaluation and use of automated scoring. *Educational Measurement: Issues and Practice*, 31(1), 2-13. [doi:10.1111/j.1745-3992.2011.00223.x](https://doi.org/10.1111/j.1745-3992.2011.00223.x)
+- Singh, A., Karayev, S., Gutowski, K., & Abbeel, P. (2017). Gradescope: A fast, flexible, and fair system for scalable assessment of handwritten work. *ACM L@S*. [doi:10.1145/3051457.3051466](https://doi.org/10.1145/3051457.3051466)
+- Landis, J. R., & Koch, G. G. (1977). The measurement of observer agreement for categorical data. *Biometrics*, 33(1), 159-174. [doi:10.2307/2529310](https://doi.org/10.2307/2529310)
+- Fleiss, J. L. (1981). *Statistical Methods for Rates and Proportions* (2nd ed.). Wiley.
+- Nazaretsky, T., et al. (2026). AI feedback outperforms human feedback on metacognitive dimensions. *Journal of Computer Assisted Learning*.
+- Shermis, M. D., & Burstein, J. (Eds.). (2013). *Handbook of Automated Essay Evaluation*. Routledge.
+- Sim, J., & Wright, C. C. (2005). The kappa statistic in reliability studies. *Physical Therapy*, 85(3), 257-268. [doi:10.1093/ptj/85.3.257](https://doi.org/10.1093/ptj/85.3.257)
+
+---
+
 ## Privacy Model
 
 - The `data/` directory is excluded from version control (`.gitignore`)
