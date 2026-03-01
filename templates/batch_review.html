@@ -56,6 +56,11 @@
     <span id="matchSummary" class="text-muted small"></span>
   </div>
 </div>
+<div id="dupWarning" class="alert alert-warning d-none py-2 mb-3">
+  <strong>Duplicate match detected:</strong>
+  <span id="dupDetail"></span>
+  <span class="text-muted small ms-2">— review highlighted rows and correct names before saving.</span>
+</div>
 {% endif %}
 
 <form method="POST" action="/upload-batch/confirm/{{ review_id }}" id="confirmForm">
@@ -314,6 +319,11 @@ function matchRoster() {
       }
       const tierColor = {high: 'success', medium: 'warning', low: 'danger'};
       let high = 0;
+      // Clear previous duplicate highlights
+      document.querySelectorAll('#examTbody tr').forEach(tr => {
+        tr.style.removeProperty('background');
+        tr.style.removeProperty('border-left');
+      });
       data.results.forEach(m => {
         const nameEl = document.querySelector(`[name="name_${m.exam_index}"]`);
         const sidEl  = document.querySelector(`[name="sid_${m.exam_index}"]`);
@@ -328,6 +338,27 @@ function matchRoster() {
         }
         if (m.score >= 0.85) high++;
       });
+      // Highlight duplicate matches
+      const dups = data.duplicates || {};
+      const dupWarning = document.getElementById('dupWarning');
+      const dupDetail  = document.getElementById('dupDetail');
+      const rows = document.querySelectorAll('#examTbody tr');
+      if (Object.keys(dups).length > 0) {
+        const dupNames = new Set();
+        for (const [idx, group] of Object.entries(dups)) {
+          const row = rows[parseInt(idx)];
+          if (row) {
+            row.style.background = 'rgba(255, 193, 7, 0.15)';
+            row.style.borderLeft = '3px solid #ffc107';
+          }
+          const match = data.results.find(r => r.exam_index === parseInt(idx));
+          if (match) dupNames.add(`${match.name} (exams #${group.map(i => i + 1).join(', #')})`);
+        }
+        if (dupDetail) dupDetail.textContent = [...dupNames].join('; ');
+        if (dupWarning) dupWarning.classList.remove('d-none');
+      } else {
+        if (dupWarning) dupWarning.classList.add('d-none');
+      }
       const summary = document.getElementById('matchSummary');
       if (summary) {
         summary.textContent = `${high} of ${data.results.length} matched at ≥85% confidence`;

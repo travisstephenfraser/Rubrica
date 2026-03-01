@@ -1677,7 +1677,19 @@ def match_roster(review_id):
                 "tier":  "low",
             })
 
-    return jsonify({"results": results})
+    # Flag duplicates: multiple exams matched to the same roster student
+    seen = {}  # (name, sid) -> [exam indices]
+    for r in results:
+        if r["score"] >= 0.60:
+            key = (r["name"].strip().lower(), r["sid"].strip().lower())
+            seen.setdefault(key, []).append(r["exam_index"])
+    dup_map = {}
+    for indices in seen.values():
+        if len(indices) > 1:
+            for idx in indices:
+                dup_map[str(idx)] = indices
+
+    return jsonify({"results": results, "duplicates": dup_map})
 
 
 # ---------------------------------------------------------------------------
