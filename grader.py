@@ -128,6 +128,7 @@ def toggle_private_mode():
 # ---------------------------------------------------------------------------
 _grade_job: dict   = {"running": False, "total": 0, "done": 0, "failed": 0, "errors": []}
 _grade_lock        = threading.Lock()
+_grade_abort       = threading.Event()
 GRADE_WORKERS      = 5  # concurrent grading threads
 
 # Background OCR job state (keyed by review_id)
@@ -1043,6 +1044,8 @@ def _boundary_regrade(exam_row, rubric, original_data: dict) -> dict:
 
 def _grade_one_worker(anon_id: str):
     """Grade a single exam. Called by ThreadPoolExecutor — each call gets its own DB connection."""
+    if _grade_abort.is_set():
+        return
     conn = sqlite3.connect(str(DB_PATH), detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -1077,7 +1080,7 @@ def _grade_one_worker(anon_id: str):
 
         conn.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-            (json.dumps(grade_data), datetime.now(timezone.utc).isoformat(), anon_id)
+            (json.dumps(grade_data), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), anon_id)
         )
         conn.commit()
         _log.info("Graded %s — %.1f/%d", anon_id,
@@ -1101,6 +1104,8 @@ def _run_grade_pool(anon_ids: list):
     finally:
         with _grade_lock:
             _grade_job["running"] = False
+            if _grade_abort.is_set():
+                _grade_job["aborted"] = True
 
 
 def _enqueue_and_start(anon_ids: list):
@@ -1110,6 +1115,7 @@ def _enqueue_and_start(anon_ids: list):
         if _grade_job["running"]:
             # Already running — don't start a second pool
             return
+        _grade_abort.clear()
         _grade_job = {"running": True, "total": len(anon_ids),
                       "done": 0, "failed": 0, "errors": []}
     threading.Thread(target=_run_grade_pool, args=(anon_ids,), daemon=True).start()
@@ -1138,7 +1144,7 @@ def grade_one(anon_id):
 
         db.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-            (json.dumps(grade_data), datetime.now(timezone.utc).isoformat(), anon_id)
+            (json.dumps(grade_data), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), anon_id)
         )
         db.commit()
         flash(f"Exam {anon_id} graded successfully.", "success")
@@ -1204,6 +1210,12 @@ def grade_progress():
 def grade_status():
     with _grade_lock:
         return jsonify(dict(_grade_job))
+
+
+@app.route("/grade-all/abort", methods=["POST"])
+def grade_abort():
+    _grade_abort.set()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,10 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2 class="mb-0">Uploaded Exams</h2>
-  <a href="/upload-batch" class="btn btn-outline-primary btn-sm">+ Upload more</a>
+  <div class="d-flex gap-2">
+    <a href="/results" class="btn btn-outline-secondary btn-sm">View Results</a>
+    <a href="/upload-batch" class="btn btn-outline-primary btn-sm">+ Upload more</a>
+  </div>
 </div>
 
 <!-- Filter + action bar -->
@@ -134,7 +137,6 @@
       <td class="d-flex gap-1 flex-wrap">
         <a href="/exam/{{ e.anon_id }}" class="btn btn-sm btn-outline-primary">Scan</a>
         {% if e.graded %}
-          <a href="/results" class="btn btn-sm btn-outline-secondary">Results</a>
           <form method="POST" action="/exam/{{ e.anon_id }}/clear-grade"
                 onsubmit="return confirm('Clear grade for {{ e.anon_id }}? This cannot be undone.')">
             <button type="submit" class="btn btn-sm btn-outline-warning">Clear</button>
