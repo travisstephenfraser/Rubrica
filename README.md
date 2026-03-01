@@ -43,8 +43,11 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Live progress** — background grading thread with a live progress bar that persists across page navigation; dismisses cleanly and reappears only when a new grading session starts
 - **Select Ungraded** — one-click button to check all ungraded exams at once, surfacing the Grade Selected toolbar for batch grading without manual selection
 - **Dark mode** — session-persisted toggle in the navbar; Bootstrap 5 `data-bs-theme` with softened table/card header backgrounds
+- **Boundary re-grading** — exams scoring within +/-1.5% of a letter grade threshold (90/80/70/60) are automatically re-graded in a second independent pass; if the two passes disagree on the letter grade, scores are averaged; full audit trail stored per exam
+- **Feedback specificity enforcement** — detects vague feedback ("Good work", "Incorrect", <8 words) and re-prompts via a text-only API call for rubric-anchored, student-specific justification
+- **Grading audit system** — `audit_grader.py` re-grades a stratified sample using Claude Opus 4.6 as an independent reference scorer; computes exact match, adjacent agreement, MAE, and bias metrics against ETS thresholds; `generate_audit_report.py` produces a PDF validation report with methodology, benchmarks, and references for faculty review
 - **Grade management** — grade individual exams, re-grade, or clear grades per-exam or all at once
-- **Results navigation** — Expand/Collapse All details, Review exam link, and Back to Results from any exam detail page
+- **Results navigation** — Expand/Collapse All details, Scan exam link, and Back to Results from any exam detail page
 - **Built-in docs** — full system documentation at `/docs`, printable as PDF
 
 ---
@@ -103,16 +106,19 @@ Open `http://localhost:5000` in your browser.
 
 ```
 Rubrica/
-├── grader.py              # Flask app — all routes and business logic
-├── requirements.txt       # Python dependencies
-├── build_info.json        # Auto-generated build metadata (commit, branch, date)
-├── generate_rubric.py     # Generates Red exam rubric PDF (ReportLab)
+├── grader.py                # Flask app — all routes and business logic
+├── audit_grader.py          # Independent re-grading audit (Opus 4.6 reference scorer)
+├── generate_audit_report.py # PDF validation report from audit results
+├── generate_rubric.py       # Generates Red exam rubric PDF (ReportLab)
 ├── generate_rubric_green.py # Generates Green exam rubric PDF (ReportLab)
-├── data/                  # Local only — excluded from version control
-│   ├── exam_grader.db     # SQLite: name↔ID mappings and grade data
-│   ├── uploads/           # Anonymized exam PDFs
-│   └── rubrics/           # Uploaded rubric files
-└── templates/             # HTML templates (Bootstrap 5)
+├── requirements.txt         # Python dependencies
+├── build_info.json          # Auto-generated build metadata (commit, branch, date)
+├── data/                    # Local only — excluded from version control
+│   ├── exam_grader.db       # SQLite: name↔ID mappings and grade data
+│   ├── uploads/             # Anonymized exam PDFs
+│   ├── rubrics/             # Uploaded rubric files
+│   └── audit_results/       # Audit JSON + validation report PDFs
+└── templates/               # HTML templates (Bootstrap 5)
 ```
 
 ---
