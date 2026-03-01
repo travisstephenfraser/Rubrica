@@ -28,6 +28,7 @@
       <!-- Batch slots -->
       <div class="mb-4">
         <label class="form-label fw-semibold">Batch PDFs</label>
+        <div class="form-text mb-2">Max 50 MB per file. Typical scanned batch: ~0.6 MB per exam.</div>
 
         <!-- Batch 1 (required) -->
         <div class="row g-2 align-items-center mb-2">
@@ -116,7 +117,19 @@
 </div>
 
 <script>
-  document.getElementById('batchForm').addEventListener('submit', function () {
+  var MAX_MB = 50;
+  document.getElementById('batchForm').addEventListener('submit', function (e) {
+    var over = [];
+    document.querySelectorAll('input[type="file"]').forEach(function (inp) {
+      if (inp.files.length && inp.files[0].size > MAX_MB * 1024 * 1024) {
+        over.push(inp.files[0].name + ' (' + (inp.files[0].size / 1024 / 1024).toFixed(1) + ' MB)');
+      }
+    });
+    if (over.length) {
+      e.preventDefault();
+      alert('These files exceed the ' + MAX_MB + ' MB limit:\n\n' + over.join('\n') + '\n\nReduce file size or split into smaller batches.');
+      return;
+    }
     document.getElementById('spinner').classList.remove('d-none');
   });
 

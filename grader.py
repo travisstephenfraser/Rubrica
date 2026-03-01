@@ -45,7 +45,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RUBRIC_DIR = DATA_DIR / "rubrics"
 DB_PATH = DATA_DIR / "exam_grader.db"
 ALLOWED_EXT = {".pdf"}
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
 # Local vision model used for cover-page OCR (runs via Ollama — no data leaves machine).
 # Swap for any Ollama vision model: "llava:13b", "minicpm-v", etc.
@@ -1398,7 +1398,7 @@ def upload_batch():
 
             pdf_bytes = file.read(MAX_UPLOAD_BYTES + 1)
             if len(pdf_bytes) > MAX_UPLOAD_BYTES:
-                flash(f"Slot {slot} PDF exceeds 500 MB limit — skipped.", "warning")
+                flash(f"Slot {slot} PDF exceeds 50 MB limit — skipped.", "warning")
                 continue
             if not pdf_bytes:
                 flash(f"Slot {slot} PDF is empty — skipped.", "warning")

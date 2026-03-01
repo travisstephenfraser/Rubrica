@@ -71,7 +71,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Rubric versioning** — multiple rubric versions (A, B, ...) for different exam variants
 - **Batch resume** — Grade All skips already-graded exams; no duplicate API calls
 - **Input validation** — session IDs validated on all routes; error messages sanitized
-- **Upload size limit** — 500 MB cap per batch PDF
+- **Upload size limit** — 50 MB cap per batch PDF with client-side validation and inline hint
 - **Dark mode** — session-persisted toggle; Bootstrap 5 `data-bs-theme`
 - **Built-in docs** — full system documentation at `/docs`, printable as PDF
 
