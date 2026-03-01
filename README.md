@@ -21,35 +21,58 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 
 ## Features
 
-- **Anonymous grading** — random 8-character IDs replace student names before any API call
-- **Multi-batch upload** — upload up to 3 batch PDFs at once, each with its own batch number; all split and merged into one review session in a single pass
-- **Cover page vision** — local Ollama vision model (default: `llama3.2-vision`) auto-extracts names and SIDs in the background with live progress; opt-in checkbox to skip on CPU-only machines; abortable mid-run
-- **Cover page consistency check** — perceptual hash comparison (8×8 phash) flags any exam whose cover page differs structurally from the majority; runs locally with no API call; flagged exams show a yellow border and ⚠ badge
-- **Launch Ollama button** — one-click Ollama startup from the upload page with a GPU-enable reminder tooltip
-- **Review tab** — persistent nav tab appears whenever an unsaved review session exists, survives page navigation and app restarts
+### Upload and Review
+
+- **Multi-batch upload** — up to 3 batch PDFs at once; split by page count and merged into one review session
+- **Roster upload** — CSV import of student names and SIDs for fuzzy matching during name assignment
+- **Cover page vision** — local Ollama vision model auto-extracts names and SIDs in the background; abortable with live progress
+- **Cover page consistency check** — perceptual hash flags exams whose cover page differs from the majority
 - **Roster fuzzy matching** — local name/SID matching with character confusion corrections (O→0, l→1, etc.)
-- **Private Mode** — single toggle hides all student names, SIDs, and blurs cover pages across every page simultaneously; designed for presentations and screen-sharing
-- **Rubric versioning** — upload and manage multiple rubric versions (A, B, …) for different exam variants
-- **Score adjustment** — edit per-question earned points inline after grading; updates save via AJAX
-- **Analytics** — grade distribution histogram, letter grade donut chart, per-question average score bar chart with per-version filter, automatic low-performance alerts
+- **Scan modal** — page-by-page exam viewer for verifying all pages are attached before confirming
+- **Persistent review tab** — nav tab appears whenever an unsaved review session exists; survives page navigation and restarts
+- **Launch Ollama button** — one-click startup from the upload page with GPU-enable reminder
+
+### Grading Accuracy
+
+- **Boundary re-grading** — scores within +/-1.5% of letter grade thresholds (90/80/70/60) trigger a second independent pass; disagreements are averaged with full audit trail
+- **Feedback specificity enforcement** — vague feedback ("Good work", "Incorrect", <8 words) is refined via a follow-up API call requiring rubric-anchored justification
+- **Faint pencil handling** — 2x contrast enhancement on exam images before grading
+- **Deterministic scoring** — temperature 0.0 on all API calls
+- **Feedback sanitizer** — strips AI deliberation language and em/en dashes from all student-facing feedback
+- **Score recalculation** — sub-part consolidation and normalization run in Python after API response
+- **JSON retry** — automatic retry on malformed Claude responses with persistent error logging
+
+### Grading Audit
+
+- **Independent re-grading** — `audit_grader.py` re-grades stratified samples using Claude Opus 4.6 as a reference scorer
+- **ETS benchmark metrics** — exact match, adjacent agreement, MAE, bias, and letter grade agreement
+- **PDF validation report** — `generate_audit_report.py` produces a faculty-ready report with methodology, benchmarks, sample size recommendations, and references
+
+### Privacy
+
+- **Anonymous grading** — random 8-character IDs replace student names before any API call
+- **Cover page exclusion** — page 0 is never sent to Claude; OCR runs exclusively through local Ollama
+- **Private Mode** — single toggle hides all names, SIDs, and blurs cover pages across every page; designed for screen-sharing
+- **Local-only storage** — all data (database, PDFs, grades) stays on the instructor's machine
+
+### Results and Export
+
+- **Inline score adjustment** — edit per-question earned points after grading; saves via AJAX with live preview
+- **Grade management** — grade, re-grade, or clear grades per-exam or in bulk; Select Ungraded for batch operations
 - **Student reports** — printable per-student report with score card, progress bar, and question breakdown
-- **Export to CSV** — summary (one row per student) and detailed (one column per question) formats
-- **Parallel grading** — 5 concurrent workers grade exams simultaneously with WAL-mode SQLite for safe concurrent writes; ~5x faster batch processing with the same API cost
-- **API resilience** — shared Anthropic client with 5-minute request timeout and 10-second connect timeout; prevents worker deadlock on hung connections
-- **Faint pencil handling** — 2x contrast enhancement on exam page images + prompt tuning for faint handwriting
-- **Feedback sanitizer** — deterministic post-processing strips AI deliberation language ("wait", "actually", "let me re-read") and em/en dashes from all feedback before saving
-- **Input validation** — review session IDs validated against expected format on all routes; error messages sanitized to avoid leaking API internals
-- **Upload size limit** — 500 MB cap per batch PDF; oversized files are skipped with a warning
-- **JSON retry** — automatically retries once if Claude returns malformed JSON, with persistent error logging to `data/grading.log`
-- **Batch resume** — re-running Grade All safely skips already-graded exams; no duplicate API calls
-- **Live progress** — background grading thread with a live progress bar that persists across page navigation; dismisses cleanly and reappears only when a new grading session starts
-- **Select Ungraded** — one-click button to check all ungraded exams at once, surfacing the Grade Selected toolbar for batch grading without manual selection
-- **Dark mode** — session-persisted toggle in the navbar; Bootstrap 5 `data-bs-theme` with softened table/card header backgrounds
-- **Boundary re-grading** — exams scoring within +/-1.5% of a letter grade threshold (90/80/70/60) are automatically re-graded in a second independent pass; if the two passes disagree on the letter grade, scores are averaged; full audit trail stored per exam
-- **Feedback specificity enforcement** — detects vague feedback ("Good work", "Incorrect", <8 words) and re-prompts via a text-only API call for rubric-anchored, student-specific justification
-- **Grading audit system** — `audit_grader.py` re-grades a stratified sample using Claude Opus 4.6 as an independent reference scorer; computes exact match, adjacent agreement, MAE, and bias metrics against ETS thresholds; `generate_audit_report.py` produces a PDF validation report with methodology, benchmarks, and references for faculty review
-- **Grade management** — grade individual exams, re-grade, or clear grades per-exam or all at once
-- **Results navigation** — Expand/Collapse All details, Scan exam link, and Back to Results from any exam detail page
+- **CSV export** — summary (one row per student) and detailed (one row per question) formats
+- **Analytics** — grade distribution histogram, letter grade donut, per-question difficulty chart with version filtering
+
+### Infrastructure
+
+- **Parallel grading** — 5 concurrent workers with WAL-mode SQLite for safe concurrent writes
+- **Live progress** — background grading with a progress bar that persists across page navigation
+- **API resilience** — 5-minute request timeout and 10-second connect timeout; prevents worker deadlock
+- **Rubric versioning** — multiple rubric versions (A, B, ...) for different exam variants
+- **Batch resume** — Grade All skips already-graded exams; no duplicate API calls
+- **Input validation** — session IDs validated on all routes; error messages sanitized
+- **Upload size limit** — 500 MB cap per batch PDF
+- **Dark mode** — session-persisted toggle; Bootstrap 5 `data-bs-theme`
 - **Built-in docs** — full system documentation at `/docs`, printable as PDF
 
 ---
