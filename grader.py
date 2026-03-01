@@ -1055,7 +1055,7 @@ def _grade_one_worker(anon_id: str):
 
         conn.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-            (json.dumps(grade_data), datetime.now(timezone.utc), anon_id)
+            (json.dumps(grade_data), datetime.now(timezone.utc).isoformat(), anon_id)
         )
         conn.commit()
         _log.info("Graded %s — %.1f/%d", anon_id,
@@ -1116,7 +1116,7 @@ def grade_one(anon_id):
 
         db.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-            (json.dumps(grade_data), datetime.now(timezone.utc), anon_id)
+            (json.dumps(grade_data), datetime.now(timezone.utc).isoformat(), anon_id)
         )
         db.commit()
         flash(f"Exam {anon_id} graded successfully.", "success")
