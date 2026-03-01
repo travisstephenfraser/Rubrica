@@ -8,12 +8,14 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 
 ## How It Works
 
-1. **Upload a rubric** — PDF or DOCX; sent natively to Claude to preserve tables and formatting
-2. **Upload exams** — up to 3 batch PDFs at once; the app splits all of them by page count and merges into one review session
-3. **Assign names** — a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors; extraction runs in the background with live progress and an abort button
-4. **Grade** — Claude Sonnet reads each answer page as an image and scores it against the rubric, using only an anonymous ID — never a name
-5. **Review & export** — grades mapped back to names locally; export to CSV or print per-student reports
-6. **Analyze** — grade distribution, band breakdown, and per-question difficulty charts
+1. **Upload a rubric** — PDF or DOCX per exam version; sent natively to Claude to preserve tables and formatting
+2. **Upload a roster** *(optional)* — CSV of student names and SIDs for fuzzy matching during name assignment
+3. **Upload exams** — up to 3 batch PDFs at once; the app splits all of them by page count and merges into one review session
+4. **Assign names** — a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors; extraction runs in the background with live progress and an abort button
+5. **Grade** — Claude Sonnet reads each answer page (with 2x contrast enhancement) and scores against the rubric using only an anonymous ID; boundary scores are automatically re-graded in a second pass; vague feedback is refined to cite specific rubric criteria
+6. **Review & adjust** — inline score editing per question, per-student printable reports, summary and detailed CSV exports; all grades mapped back to names locally
+7. **Analyze** — grade distribution histogram, letter grade breakdown, per-question difficulty charts with version filtering
+8. **Audit** *(optional)* — re-grade a sample with Claude Opus 4.6 as an independent reference scorer; generate a PDF validation report with ETS benchmark comparisons
 
 ---
 
