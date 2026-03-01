@@ -270,7 +270,7 @@
 
     <div class="flow-step"><div class="flow-num">3</div>
       <div><strong>Name extraction + review page.</strong> Ollama (<code>{{ ollama_model }}</code>) reads each cover page (page 0)
-      locally in a background thread and pre-fills student name and SID with live progress. Extraction is opt-in (skip on CPU-only machines) and can be aborted mid-run — names extracted so far are preserved. A thumbnail and full-page modal viewer let you verify all pages are attached and correct any misreads before confirming. Roster fuzzy-match available if a class list has been uploaded. A persistent Review nav tab allows returning to an in-progress session from anywhere in the app.</div></div>
+      locally in a background thread and pre-fills student name and SID with live progress. Extraction is opt-in (skip on CPU-only machines) and can be aborted mid-run — names extracted so far are preserved. A thumbnail and full-page modal viewer let you verify all pages are attached and correct any misreads before confirming. Roster fuzzy-match available if a class list has been uploaded. A persistent Scan nav tab allows returning to an in-progress session from anywhere in the app.</div></div>
 
     <div class="flow-step"><div class="flow-num">4</div>
       <div><strong>Saved to SQLite.</strong> Each exam gets a random <code>anon_id</code>.
@@ -312,7 +312,7 @@
       <li><strong>Cover page consistency check</strong> — after split, a perceptual hash (8×8 phash, Hamming distance threshold 15/64) compares all cover pages locally. Outliers get a yellow thumbnail border and ⚠ Cover badge. Runs on-device, no API.</li>
       <li>Name assignment page shows a cover-page thumbnail per exam, batch number column, and a full modal page viewer.</li>
       <li>Ollama (<code>{{ ollama_model }}</code>) reads each cover page locally in a background thread to pre-fill student name and SID — no API cost, no data leaves the machine. Opt-in checkbox to skip on CPU-only machines. Abortable mid-run via Stop button.</li>
-      <li>A <strong>Review</strong> nav tab appears between Upload and Exams whenever an unsaved session exists — survives page navigation and app restarts.</li>
+      <li>A <strong>Scan</strong> nav tab appears between Upload and Exams whenever an unsaved session exists — survives page navigation and app restarts.</li>
       <li>Roster fuzzy-match confirms identity against an uploaded class list (local only, no API).</li>
       <li>Names and SIDs can be hidden during review with a toggle — values are always preserved in the form and submitted correctly.</li>
       <li>Cover page blurs automatically in the full-page review modal when Private Mode is active.</li>
@@ -352,7 +352,7 @@
       <li>No partial credit on MC; handles ambiguous double-marks by using the most deliberate one.</li>
     </ul>
 
-    <h3>Per-Exam Review Page</h3>
+    <h3>Per-Exam Scan Page</h3>
     <ul>
       <li>Page-by-page viewer for every uploaded exam.</li>
       <li>Cover labeled "not sent to Claude"; answer pages labeled "sent to Claude for grading."</li>

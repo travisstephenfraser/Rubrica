@@ -129,7 +129,7 @@
       </td>
 
       <td class="d-flex gap-1 flex-wrap">
-        <a href="/exam/{{ e.anon_id }}" class="btn btn-sm btn-outline-primary">Review</a>
+        <a href="/exam/{{ e.anon_id }}" class="btn btn-sm btn-outline-primary">Scan</a>
         {% if e.graded %}
           <a href="/results" class="btn btn-sm btn-outline-secondary">Results</a>
           <form method="POST" action="/exam/{{ e.anon_id }}/clear-grade"

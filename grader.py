@@ -54,6 +54,21 @@ OLLAMA_VISION_MODEL = "llama3.2-vision"
 # Claude model used for grading. Update here when upgrading models.
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
+# Boundary re-grade: exams scoring within this margin of a letter grade
+# threshold get automatically re-graded for verification (ETS best practice).
+_GRADE_BOUNDARIES = [90, 80, 70, 60]
+_BOUNDARY_MARGIN = 1.5  # percentage points
+
+# Vague feedback detector: patterns that are too generic to help students learn.
+# Research basis: Nazaretsky et al. 2026 (JCAL) — vague AI feedback is discounted
+# by students and fails to produce learning gains.
+_VAGUE_FEEDBACK = re.compile(
+    r'^(good\s*(work|job|answer)|mostly correct|needs? improvement|'
+    r'well done|incorrect\.?|correct\.?|partial credit(?: awarded)?|'
+    r'see rubric|ok(ay)?|fair|poor|excellent|satisfactory)\.?$',
+    re.IGNORECASE,
+)
+
 # Shared Anthropic client — thread-safe, instantiated once.
 _anthropic_client = anthropic.Anthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY"),
@@ -251,6 +266,11 @@ def letter_grade(pct: float) -> str:
     if pct >= 70: return "C"
     if pct >= 60: return "D"
     return "F"
+
+
+def _is_boundary_score(pct: float) -> bool:
+    """True if percentage falls within +/-1.5 of a letter grade threshold."""
+    return any(abs(pct - b) <= _BOUNDARY_MARGIN for b in _GRADE_BOUNDARIES)
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +876,66 @@ FEEDBACK TONE (critical):
     if data.get("overall_feedback"):
         data["overall_feedback"] = _clean_feedback(data["overall_feedback"])
 
+    # --- Feedback specificity enforcement ---
+    # Vague feedback like "Good work" or "Incorrect" without explanation is
+    # pedagogically useless (Nazaretsky et al. 2026). Detect and refine via
+    # a lightweight text-only API call (no images, low token cost).
+    # Skip full-marks questions — "Correct" is sufficient for MC and acceptable
+    # for free-response when nothing was missed. Detailed feedback matters most
+    # when points are lost.
+    vague_questions = []
+    if data.get("scores"):
+        for s in data["scores"]:
+            # Full marks → skip (MC correct, perfect free-response — nothing to explain)
+            if s.get("earned_points", 0) >= s.get("max_points", 1):
+                continue
+            fb = (s.get("feedback") or "").strip()
+            if not fb or len(fb.split()) < 8 or _VAGUE_FEEDBACK.match(fb):
+                vague_questions.append(s)
+
+    if vague_questions:
+        _log.info("[FEEDBACK] %s has %d question(s) with vague feedback - requesting refinement",
+                  exam_row["anon_id"], len(vague_questions))
+        q_details = "\n".join(
+            f"- {q['question']}: earned {q['earned_points']}/{q['max_points']}. "
+            f"Current feedback: \"{q.get('feedback', '')}\""
+            for q in vague_questions
+        )
+        rubric_text = rubric["content"] if rubric["content"] else "(rubric not available as text)"
+        refine_prompt = (
+            f"You graded an exam and gave feedback that is too vague to help the student.\n\n"
+            f"RUBRIC:\n{rubric_text}\n\n"
+            f"Questions needing better feedback:\n{q_details}\n\n"
+            f"For each question, write specific feedback (15+ words) that states what "
+            f"was correct or incorrect and references the rubric criteria.\n\n"
+            f"Respond ONLY with JSON: {{\"improved\": [{{\"question\": \"Q1\", \"feedback\": \"...\"}}]}}"
+        )
+        try:
+            refine_resp = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=2048,
+                temperature=0.0,
+                messages=[{"role": "user", "content": refine_prompt}],
+            )
+            refine_text = ""
+            for block in refine_resp.content:
+                if block.type == "text":
+                    refine_text = block.text
+                    break
+            rstart = refine_text.find("{")
+            rend = refine_text.rfind("}") + 1
+            if rstart != -1 and rend > 0:
+                improved = json.loads(refine_text[rstart:rend])
+                fb_map = {item["question"]: item["feedback"]
+                          for item in improved.get("improved", [])}
+                for s in data["scores"]:
+                    if s["question"] in fb_map and len(fb_map[s["question"]].split()) >= 10:
+                        s["feedback"] = _clean_feedback(fb_map[s["question"]])
+                        _log.info("[FEEDBACK] Refined %s for %s",
+                                  s["question"], exam_row["anon_id"])
+        except Exception as e:
+            _log.warning("[FEEDBACK] Refinement failed for %s: %s", exam_row["anon_id"], e)
+
     # Recalculate total_earned from individual scores — Claude's summary total sometimes
     # diverges from its own per-question scores due to rounding (e.g. 18 × 3.33 = 59.94
     # instead of 60).  Keep total_possible as Claude reported it (correctly read from the
@@ -889,6 +969,56 @@ FEEDBACK TONE (critical):
     return data
 
 
+def _boundary_regrade(exam_row, rubric, original_data: dict) -> dict:
+    """Re-grade an exam near a letter grade boundary and reconcile the two passes.
+
+    If both passes agree on the letter grade, keep the original.
+    If they disagree, average the earned scores to eliminate single-pass noise.
+    The boundary_check field is added to grade_data for audit trail.
+    """
+    orig_earned = original_data["total_earned"]
+    orig_possible = original_data["total_possible"]
+    orig_pct = orig_earned / orig_possible * 100
+    orig_grade = original_data["letter_grade"]
+
+    _log.info("[BOUNDARY] %s scored %.1f%% (%s) - triggering verification re-grade",
+              exam_row["anon_id"], orig_pct, orig_grade)
+
+    regrade_data = _grade_exam(exam_row, rubric)
+    regrade_earned = regrade_data["total_earned"]
+    regrade_pct = regrade_earned / orig_possible * 100
+    regrade_grade = regrade_data["letter_grade"]
+
+    if orig_grade == regrade_grade:
+        _log.info("[BOUNDARY] %s confirmed: both passes agree on %s (%.1f%% vs %.1f%%)",
+                  exam_row["anon_id"], orig_grade, orig_pct, regrade_pct)
+        original_data["boundary_check"] = {
+            "pass_1": {"earned": orig_earned, "pct": round(orig_pct, 1), "grade": orig_grade},
+            "pass_2": {"earned": regrade_earned, "pct": round(regrade_pct, 1), "grade": regrade_grade},
+            "result": "confirmed",
+        }
+        return original_data
+
+    # Letter grades disagree - average the earned scores
+    avg_earned = round((orig_earned + regrade_earned) / 2, 2)
+    avg_pct = avg_earned / orig_possible * 100
+    final_grade = letter_grade(avg_pct)
+
+    _log.info("[BOUNDARY] %s disagreement: pass 1 = %s (%.1f%%), pass 2 = %s (%.1f%%) "
+              "- averaged to %s (%.1f%%)",
+              exam_row["anon_id"], orig_grade, orig_pct,
+              regrade_grade, regrade_pct, final_grade, avg_pct)
+
+    original_data["total_earned"] = avg_earned
+    original_data["letter_grade"] = final_grade
+    original_data["boundary_check"] = {
+        "pass_1": {"earned": orig_earned, "pct": round(orig_pct, 1), "grade": orig_grade},
+        "pass_2": {"earned": regrade_earned, "pct": round(regrade_pct, 1), "grade": regrade_grade},
+        "result": "averaged",
+    }
+    return original_data
+
+
 def _grade_one_worker(anon_id: str):
     """Grade a single exam. Called by ThreadPoolExecutor — each call gets its own DB connection."""
     conn = sqlite3.connect(str(DB_PATH), detect_types=sqlite3.PARSE_DECLTYPES)
@@ -916,6 +1046,13 @@ def _grade_one_worker(anon_id: str):
             raise ValueError(f"No rubric for Version {exam['version']}")
 
         grade_data = _grade_exam(exam, rubric)
+
+        # Boundary verification: re-grade exams near letter grade thresholds
+        if grade_data.get("total_possible", 0) > 0:
+            pct = grade_data["total_earned"] / grade_data["total_possible"] * 100
+            if _is_boundary_score(pct):
+                grade_data = _boundary_regrade(exam, rubric, grade_data)
+
         conn.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
             (json.dumps(grade_data), datetime.now(timezone.utc), anon_id)
@@ -970,6 +1107,13 @@ def grade_one(anon_id):
         return redirect(url_for("exams"))
     try:
         grade_data = _grade_exam(exam, rubric)
+
+        # Boundary verification: re-grade exams near letter grade thresholds
+        if grade_data.get("total_possible", 0) > 0:
+            pct = grade_data["total_earned"] / grade_data["total_possible"] * 100
+            if _is_boundary_score(pct):
+                grade_data = _boundary_regrade(exam, rubric, grade_data)
+
         db.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
             (json.dumps(grade_data), datetime.now(timezone.utc), anon_id)
@@ -1154,6 +1298,7 @@ def results():
             "letter_grade": gd.get("letter_grade", "?"),
             "overall_feedback": gd.get("overall_feedback", ""),
             "scores":       gd.get("scores", []),
+            "boundary_check": gd.get("boundary_check"),
         })
 
     versions = db.execute(

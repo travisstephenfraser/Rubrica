@@ -101,6 +101,9 @@
           {% elif r.letter_grade == 'D' %}bg-warning
           {% else %}bg-danger{% endif %}
           fs-6">{{ r.letter_grade }}</span>
+        {% if r.boundary_check %}
+        <span class="text-success ms-1" title="Boundary verified: {{ r.boundary_check.result }} ({{ r.boundary_check.pass_1.pct }}% / {{ r.boundary_check.pass_2.pct }}%)">&#10003;</span>
+        {% endif %}
       </td>
       <td class="d-flex gap-1">
         <button class="btn btn-sm btn-outline-secondary"
@@ -111,7 +114,7 @@
         <a href="/exam/{{ r.anon_id }}/report" target="_blank"
            class="btn btn-sm btn-outline-primary">Report</a>
         <a href="/exam/{{ r.anon_id }}?from=results" target="_blank"
-           class="btn btn-sm btn-outline-secondary">Review</a>
+           class="btn btn-sm btn-outline-secondary">Scan</a>
       </td>
     </tr>
     <!-- Expandable detail row -->

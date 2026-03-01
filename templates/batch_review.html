@@ -39,7 +39,7 @@
 
 <div class="alert alert-info py-2 mb-3 small">
   <strong>Tip:</strong> Ollama auto-extracts names &amp; SIDs from each cover page — verify and correct as needed.
-  Click a thumbnail or <em>Review</em> to confirm all pages are attached.
+  Click a thumbnail or <em>Scan</em> to confirm all pages are attached.
   Names and SIDs are stored locally only and <strong>never</strong> sent to Claude for grading.
 </div>
 
@@ -118,11 +118,11 @@
             <!-- Page range -->
             <td class="text-muted font-monospace small">{{ exam.pages }}</td>
 
-            <!-- Review button -->
+            <!-- Scan button -->
             <td>
               <button type="button" class="btn btn-sm btn-outline-secondary"
                       onclick="openReview({{ loop.index0 }}, {{ exam.page_count }}, {{ loop.index }})">
-                Review
+                Scan
               </button>
             </td>
           </tr>
@@ -153,7 +153,7 @@
     <div class="modal-content">
 
       <div class="modal-header py-2">
-        <h5 class="modal-title" id="reviewModalLabel">Exam Review</h5>
+        <h5 class="modal-title" id="reviewModalLabel">Exam Scan</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
 
