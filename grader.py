@@ -13,17 +13,19 @@ import io
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import statistics as _stats
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
 
 import anthropic
+import httpx
 import docx
 import ollama
 import pdfplumber
@@ -43,6 +45,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RUBRIC_DIR = DATA_DIR / "rubrics"
 DB_PATH = DATA_DIR / "exam_grader.db"
 ALLOWED_EXT = {".pdf"}
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
 
 # Local vision model used for cover-page OCR (runs via Ollama — no data leaves machine).
 # Swap for any Ollama vision model: "llava:13b", "minicpm-v", etc.
@@ -50,6 +53,12 @@ OLLAMA_VISION_MODEL = "llama3.2-vision"
 
 # Claude model used for grading. Update here when upgrading models.
 CLAUDE_MODEL = "claude-sonnet-4-6"
+
+# Shared Anthropic client — thread-safe, instantiated once.
+_anthropic_client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    timeout=httpx.Timeout(300.0, connect=10.0),
+)
 
 DATA_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -118,6 +127,7 @@ def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA journal_mode=WAL")
     return g.db
 
 
@@ -178,6 +188,14 @@ def init_db():
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
+
+_REVIEW_ID_RE = re.compile(r'^[0-9a-f]{16}$')
+
+
+def _valid_review_id(review_id: str) -> bool:
+    """Return True if review_id matches the expected hex token format."""
+    return bool(_REVIEW_ID_RE.match(review_id))
+
 
 def generate_anon_id():
     """8-char URL-safe random ID that won't be guessable or sequential."""
@@ -378,7 +396,8 @@ def read_name_sid_from_cover(file_path: str) -> dict:
         data = json.loads(text)
         return {"name": str(data.get("name", "")).strip(),
                 "sid":  str(data.get("sid",  "")).strip()}
-    except Exception:
+    except Exception as e:
+        _log.warning("Cover OCR failed for %s: %s", file_path, e)
         return {"name": "", "sid": ""}
 
 
@@ -732,7 +751,7 @@ FEEDBACK TONE (critical):
   "overall_feedback": "<2-3 sentence summary>"
 }}"""
 
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    client = _anthropic_client
 
     MAX_ATTEMPTS = 2
     last_error = None
@@ -778,7 +797,6 @@ FEEDBACK TONE (critical):
     # Consolidate any sub-part rows (e.g. "Q3a", "Q3 (a)", "Q3-a") into their parent
     # question ("Q3") by summing points and concatenating feedback.
     if data.get("scores"):
-        import re
         merged = {}   # parent_key -> {max, earned, feedbacks}
         order  = []   # preserve first-seen order
         for s in data["scores"]:
@@ -875,6 +893,7 @@ def _grade_one_worker(anon_id: str):
     """Grade a single exam. Called by ThreadPoolExecutor — each call gets its own DB connection."""
     conn = sqlite3.connect(str(DB_PATH), detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         exam = conn.execute(
             "SELECT * FROM exams WHERE anon_id=?", (anon_id,)
@@ -899,7 +918,7 @@ def _grade_one_worker(anon_id: str):
         grade_data = _grade_exam(exam, rubric)
         conn.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-            (json.dumps(grade_data), datetime.utcnow(), anon_id)
+            (json.dumps(grade_data), datetime.now(timezone.utc), anon_id)
         )
         conn.commit()
         _log.info("Graded %s — %.1f/%d", anon_id,
@@ -953,12 +972,13 @@ def grade_one(anon_id):
         grade_data = _grade_exam(exam, rubric)
         db.execute(
             "UPDATE exams SET grade_data=?, graded_at=? WHERE anon_id=?",
-            (json.dumps(grade_data), datetime.utcnow(), anon_id)
+            (json.dumps(grade_data), datetime.now(timezone.utc), anon_id)
         )
         db.commit()
         flash(f"Exam {anon_id} graded successfully.", "success")
     except Exception as e:
-        flash(f"Grading failed for {anon_id}: {e}", "danger")
+        _log.error("grade_one failed for %s: %s", anon_id, e, exc_info=True)
+        flash(f"Grading failed for {anon_id}. See grading.log for details.", "danger")
 
     return redirect(url_for("results"))
 
@@ -1231,7 +1251,10 @@ def upload_batch():
             except ValueError:
                 batch_num = slot
 
-            pdf_bytes = file.read()
+            pdf_bytes = file.read(MAX_UPLOAD_BYTES + 1)
+            if len(pdf_bytes) > MAX_UPLOAD_BYTES:
+                flash(f"Slot {slot} PDF exceeds 500 MB limit — skipped.", "warning")
+                continue
             if not pdf_bytes:
                 flash(f"Slot {slot} PDF is empty — skipped.", "warning")
                 continue
@@ -1284,6 +1307,9 @@ def upload_batch():
 
 @app.route("/upload-batch/review/<review_id>")
 def batch_review(review_id):
+    if not _valid_review_id(review_id):
+        flash("Invalid session.", "danger")
+        return redirect(url_for("upload_batch"))
     review_path = DATA_DIR / f"review_{review_id}.json"
     if not review_path.exists():
         flash("Review session not found. Please upload again.", "danger")
@@ -1303,6 +1329,8 @@ def batch_review(review_id):
 
 @app.route("/upload-batch/ocr-status/<review_id>")
 def ocr_status(review_id):
+    if not _valid_review_id(review_id):
+        return jsonify({"error": "Invalid session."}), 400
     with _ocr_jobs_lock:
         job = dict(_ocr_jobs.get(review_id, {"total": 0, "done": 0, "running": False}))
     review_path = DATA_DIR / f"review_{review_id}.json"
@@ -1319,6 +1347,8 @@ def ocr_status(review_id):
 
 @app.route("/upload-batch/ocr-abort/<review_id>", methods=["POST"])
 def ocr_abort(review_id):
+    if not _valid_review_id(review_id):
+        return jsonify({"error": "Invalid session."}), 400
     with _ocr_jobs_lock:
         if review_id in _ocr_jobs and _ocr_jobs[review_id].get("running"):
             _ocr_jobs[review_id]["aborted"] = True
@@ -1328,6 +1358,9 @@ def ocr_abort(review_id):
 
 @app.route("/upload-batch/confirm/<review_id>", methods=["POST"])
 def batch_confirm(review_id):
+    if not _valid_review_id(review_id):
+        flash("Invalid session.", "danger")
+        return redirect(url_for("upload_batch"))
     review_path = DATA_DIR / f"review_{review_id}.json"
     if not review_path.exists():
         flash("Review session not found. Please upload again.", "danger")
@@ -1366,6 +1399,9 @@ def batch_confirm(review_id):
 
 @app.route("/upload-batch/discard/<review_id>", methods=["POST"])
 def batch_discard(review_id):
+    if not _valid_review_id(review_id):
+        flash("Invalid session.", "danger")
+        return redirect(url_for("upload_batch"))
     review_path = DATA_DIR / f"review_{review_id}.json"
     if review_path.exists():
         try:
@@ -1383,6 +1419,8 @@ def batch_discard(review_id):
 @app.route("/upload-batch/preview/<review_id>/<int:exam_index>/<int:page_num>")
 def batch_preview_page(review_id, exam_index, page_num):
     """Serve a rendered page image from a temp split exam (before it's saved to DB)."""
+    if not _valid_review_id(review_id):
+        return "Invalid session", 400
     review_path = DATA_DIR / f"review_{review_id}.json"
     if not review_path.exists():
         return "Session expired", 404
@@ -1462,6 +1500,8 @@ def roster_clear():
 
 @app.route("/upload-batch/review/<review_id>/match-roster", methods=["POST"])
 def match_roster(review_id):
+    if not _valid_review_id(review_id):
+        return jsonify({"error": "Invalid session."}), 400
     review_path = DATA_DIR / f"review_{review_id}.json"
     if not review_path.exists():
         return jsonify({"error": "Review session not found"}), 404
@@ -1809,7 +1849,7 @@ def analytics():
         version_filter=version_filter,
         batch_filter=batch_filter,
         q_version=q_version,
-        now=datetime.utcnow().strftime("%B %d, %Y"),
+        now=datetime.now(timezone.utc).strftime("%B %d, %Y"),
     )
 
 
@@ -1820,7 +1860,9 @@ def analytics():
 @app.route("/launch-ollama", methods=["POST"])
 def launch_ollama():
     import subprocess, shutil, urllib.request
-    ollama_path = shutil.which("ollama") or r"C:\Users\tfras\AppData\Local\Programs\Ollama\ollama.exe"
+    ollama_path = shutil.which("ollama") or os.environ.get("OLLAMA_EXE")
+    if not ollama_path:
+        return {"ok": False, "message": "ollama not found in PATH. Set OLLAMA_EXE in .env."}, 500
 
     # Check if already running
     try:
