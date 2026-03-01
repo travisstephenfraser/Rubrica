@@ -20,6 +20,7 @@ import statistics as _stats
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -87,7 +88,7 @@ _log_handler.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s  %(mes
 _log.addHandler(_log_handler)
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
 
 @app.context_processor
@@ -100,10 +101,20 @@ def inject_dark_mode():
     return {"dark_mode": session.get("dark_mode", False)}
 
 
+def _safe_redirect_back():
+    """Return the referrer URL only if it's same-origin; otherwise fall back to /."""
+    ref = request.form.get("next") or request.referrer
+    if ref:
+        parsed = urlparse(ref)
+        if not parsed.netloc or parsed.netloc == request.host:
+            return ref
+    return "/"
+
+
 @app.route("/toggle-dark-mode", methods=["POST"])
 def toggle_dark_mode():
     session["dark_mode"] = not session.get("dark_mode", False)
-    return redirect(request.form.get("next") or request.referrer or "/")
+    return redirect(_safe_redirect_back())
 
 
 @app.context_processor
@@ -121,7 +132,7 @@ def inject_active_review():
 @app.route("/toggle-private-mode", methods=["POST"])
 def toggle_private_mode():
     session["private_mode"] = not session.get("private_mode", False)
-    return redirect(request.form.get("next") or request.referrer or "/")
+    return redirect(_safe_redirect_back())
 
 # ---------------------------------------------------------------------------
 # Background grading job state
@@ -191,12 +202,12 @@ def init_db():
         ("exams",   "ocr_at",           "TIMESTAMP"),
         ("rubrics", "rubric_file_path", "TEXT"),
         ("exams",   "student_sid",      "TEXT"),
+        ("rubrics", "total_points",     "REAL"),
     ]
     for table, col, typedef in migrations:
-        try:
+        cols = [row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()]
+        if col not in cols:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
-        except sqlite3.OperationalError:
-            pass  # column already exists
     db.commit()
     db.close()
 
@@ -436,7 +447,9 @@ def _run_ocr_background(review_id: str, review_path: Path):
             result       = read_name_sid_from_cover(exam["file_path"])
             exam["name"] = result["name"]
             exam["sid"]  = result["sid"]
-            review_path.write_text(json.dumps(data))
+            tmp = review_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data))
+            tmp.replace(review_path)
             with _ocr_jobs_lock:
                 _ocr_jobs[review_id]["done"] = i + 1
     except Exception as e:
@@ -518,9 +531,10 @@ def index():
 def setup():
     db = get_db()
     if request.method == "POST":
-        version = request.form.get("version", "").strip().upper()
-        content = request.form.get("content", "").strip()
-        file    = request.files.get("rubric_file")
+        version      = request.form.get("version", "").strip().upper()
+        content      = request.form.get("content", "").strip()
+        file         = request.files.get("rubric_file")
+        total_points = request.form.get("total_points", type=float)
 
         if not version:
             flash("Exam version is required.", "danger")
@@ -550,8 +564,8 @@ def setup():
             return redirect(url_for("setup"))
 
         db.execute(
-            "INSERT INTO rubrics (version, content, rubric_file_path) VALUES (?, ?, ?)",
-            (version, content, rubric_file_path)
+            "INSERT INTO rubrics (version, content, rubric_file_path, total_points) VALUES (?, ?, ?, ?)",
+            (version, content, rubric_file_path, total_points)
         )
         db.commit()
         flash(f"Rubric for Version {version} saved.", "success")
@@ -803,7 +817,7 @@ FEEDBACK TONE (critical):
     for attempt in range(1, MAX_ATTEMPTS + 1):
         with client.messages.stream(
             model=CLAUDE_MODEL,
-            max_tokens=8192,
+            max_tokens=16384,
             temperature=0.0,
             system=system_prompt,
             messages=[{"role": "user", "content": content}],
@@ -811,7 +825,9 @@ FEEDBACK TONE (critical):
             full_response = stream.get_final_message()
 
         if full_response.stop_reason == "max_tokens":
-            raise ValueError("Response was cut off (max_tokens reached). The exam may be too long.")
+            last_error = ValueError("Response was cut off (max_tokens reached). The exam may be too long.")
+            _log.warning("Attempt %d/%d for %s: max_tokens reached (limit=%d)", attempt, MAX_ATTEMPTS, exam_row["anon_id"], token_limit)
+            continue
 
         response_text = ""
         for block in full_response.content:
@@ -820,10 +836,42 @@ FEEDBACK TONE (critical):
                 break
 
         start = response_text.find("{")
-        end   = response_text.rfind("}") + 1
-        if start == -1 or end == 0:
+        if start == -1:
             last_error = ValueError(f"No JSON found. Claude responded with: {response_text[:500]}")
             _log.warning("Attempt %d/%d for %s: no JSON in response", attempt, MAX_ATTEMPTS, exam_row["anon_id"])
+            continue
+
+        # Find matching closing brace by tracking nesting depth.
+        # rfind("}") grabs too much when the model appends commentary
+        # or a second JSON object after the main response.
+        depth = 0
+        end = -1
+        in_string = False
+        escape = False
+        for i in range(start, len(response_text)):
+            ch = response_text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+
+        if end == -1:
+            last_error = ValueError(f"Unbalanced JSON braces: {response_text[:500]}")
+            _log.warning("Attempt %d/%d for %s: unbalanced JSON", attempt, MAX_ATTEMPTS, exam_row["anon_id"])
             continue
 
         try:
@@ -831,7 +879,7 @@ FEEDBACK TONE (critical):
             break  # success
         except json.JSONDecodeError as e:
             last_error = e
-            _log.warning("Attempt %d/%d for %s: malformed JSON — %s", attempt, MAX_ATTEMPTS, exam_row["anon_id"], e)
+            _log.warning("Attempt %d/%d for %s: malformed JSON - %s", attempt, MAX_ATTEMPTS, exam_row["anon_id"], e)
             continue
 
     if data is None:
@@ -861,12 +909,26 @@ FEEDBACK TONE (critical):
         data["scores"] = [
             {
                 "question":      k,
-                "max_points":    round(v["max_points"],    2),
-                "earned_points": round(v["earned_points"], 2),
+                "max_points":    v["max_points"],
+                "earned_points": v["earned_points"],
                 "feedback":      " | ".join(v["feedbacks"]),
             }
             for k, v in [(k, merged[k]) for k in order]
         ]
+
+    # Per-question normalization: scale scores to declared rubric total.
+    rubric_total = rubric["total_points"] if rubric["total_points"] else None
+    if rubric_total and data.get("scores"):
+        sum_max = sum(float(s.get("max_points", 0)) for s in data["scores"])
+        if sum_max > 0 and abs(sum_max - rubric_total) > 0.5:
+            q_scale = rubric_total / sum_max
+            # Scale per-question values without rounding — defer rounding to final totals
+            for s in data["scores"]:
+                s["max_points"]    = s["max_points"]    * q_scale
+                s["earned_points"] = s["earned_points"] * q_scale
+            # Override Claude's reported total so downstream recalculation uses
+            # the normalized value, not the raw rubric sum (e.g. 105).
+            data["total_possible"] = rubric_total
 
     # Strip deliberation / thinking-out-loud language from feedback.
     # Claude sometimes leaks its reasoning process ("Wait —", "Actually,", "Let me
@@ -960,34 +1022,44 @@ FEEDBACK TONE (critical):
             _log.warning("[FEEDBACK] Refinement failed for %s: %s", exam_row["anon_id"], e)
 
     # Recalculate total_earned from individual scores — Claude's summary total sometimes
-    # diverges from its own per-question scores due to rounding (e.g. 18 × 3.33 = 59.94
+    # diverges from its own per-question scores due to rounding (e.g. 18 x 3.33 = 59.94
     # instead of 60).  Keep total_possible as Claude reported it (correctly read from the
     # rubric), but derive earned by subtracting actual missed points from that total.
+    # All math stays full-precision; rounding happens once at the very end.
     if data.get("scores"):
         sum_possible = sum(float(s.get("max_points",    0)) for s in data["scores"])
         sum_earned   = sum(float(s.get("earned_points", 0)) for s in data["scores"])
         missed = sum_possible - sum_earned
         reported_possible = float(data.get("total_possible", sum_possible))
-        data["total_earned"] = round(max(reported_possible - missed, 0), 2)
+        data["total_earned"] = max(reported_possible - missed, 0)
 
     # Normalize total_possible to nearest integer when rubric point values
-    # don't divide evenly (e.g. 18 × 3.33 = 59.94 instead of 60).
+    # don't divide evenly (e.g. 18 x 3.33 = 59.94 instead of 60).
     # If the sum is within 0.5 of a whole number, scale both values to that integer.
     raw_possible = data.get("total_possible", 0)
     intended     = round(raw_possible)
     if intended > 0 and abs(raw_possible - intended) < 0.5:
         scale = intended / raw_possible
-        data["total_earned"]   = round(data.get("total_earned", 0) * scale, 2)
+        data["total_earned"]   = data.get("total_earned", 0) * scale
         data["total_possible"] = intended
 
-    # Recalculate letter grade from the corrected totals
+    # Hard cap: earned can never exceed possible
+    if data.get("total_possible", 0) > 0:
+        data["total_earned"] = min(data["total_earned"], data["total_possible"])
+
+    # --- Final rounding (once, after all math) ---
+    # Round totals to 2 decimal places for storage/display
+    data["total_earned"] = round(data["total_earned"], 2)
+    # Round per-question values for display
+    if data.get("scores"):
+        for s in data["scores"]:
+            s["max_points"]    = round(s["max_points"], 2)
+            s["earned_points"] = round(s["earned_points"], 2)
+
+    # Recalculate letter grade from the final rounded totals
     if data.get("total_possible", 0) > 0:
         pct = data["total_earned"] / data["total_possible"] * 100
         data["letter_grade"] = letter_grade(pct)
-
-    # Hard cap: earned can never exceed possible (guards against rounding overshoot)
-    if data.get("total_possible", 0) > 0:
-        data["total_earned"] = min(data["total_earned"], data["total_possible"])
 
     return data
 
@@ -1009,7 +1081,7 @@ def _boundary_regrade(exam_row, rubric, original_data: dict) -> dict:
 
     regrade_data = _grade_exam(exam_row, rubric)
     regrade_earned = regrade_data["total_earned"]
-    regrade_pct = regrade_earned / orig_possible * 100
+    regrade_pct = regrade_earned / regrade_data["total_possible"] * 100
     regrade_grade = regrade_data["letter_grade"]
 
     if orig_grade == regrade_grade:
@@ -1292,7 +1364,8 @@ def exam_page_image(anon_id, page_num):
         img_bytes = _render_page_png(exam["file_path"], page_num)
         return send_file(io.BytesIO(img_bytes), mimetype="image/png")
     except Exception as e:
-        return f"Error rendering page: {e}", 500
+        _log.error("Error rendering page %d for %s: %s", page_num, anon_id, e)
+        return "Error rendering page", 500
 
 
 # ---------------------------------------------------------------------------
@@ -1613,7 +1686,8 @@ def batch_preview_page(review_id, exam_index, page_num):
         img_bytes = _render_page_png(file_path, page_num, scale=scale)
         return send_file(io.BytesIO(img_bytes), mimetype="image/png")
     except Exception as e:
-        return f"Error rendering page: {e}", 500
+        _log.error("Error rendering preview page %d for review %s exam %d: %s", page_num, review_id, exam_index, e)
+        return "Error rendering page", 500
 
 
 # ---------------------------------------------------------------------------
