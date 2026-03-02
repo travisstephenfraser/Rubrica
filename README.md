@@ -138,8 +138,6 @@ Rubrica/
 ├── audit_grader.py          # Independent re-grading audit (Gemini 3.1 Pro / Opus 4.6)
 ├── generate_audit_report.py # PDF validation report from audit results
 ├── generate_testing_report.py # Testing analysis report generator
-├── generate_rubric.py       # Generates Red exam rubric PDF (ReportLab)
-├── generate_rubric_green.py # Generates Green exam rubric PDF (ReportLab)
 ├── requirements.txt         # Python dependencies
 ├── build_info.json          # Auto-generated build metadata (commit, branch, date)
 ├── data/                    # Local only — excluded from version control
