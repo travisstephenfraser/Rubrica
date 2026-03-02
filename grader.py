@@ -665,7 +665,7 @@ def delete_all_exams():
 @app.route("/exam/<anon_id>/delete", methods=["POST"])
 def delete_exam(anon_id):
     db   = get_db()
-    exam = db.execute("SELECT * FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
+    exam = db.execute("SELECT file_path FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
     if not exam:
         flash("Exam not found.", "danger")
         return redirect(url_for("exams"))
@@ -690,7 +690,7 @@ def delete_selected():
     db = get_db()
     removed, failed = 0, 0
     for aid in anon_ids:
-        exam = db.execute("SELECT * FROM exams WHERE anon_id=?", (aid,)).fetchone()
+        exam = db.execute("SELECT file_path FROM exams WHERE anon_id=?", (aid,)).fetchone()
         if not exam:
             continue
         try:
@@ -1131,7 +1131,7 @@ def _grade_one_worker(anon_id: str):
     conn.execute("PRAGMA journal_mode=WAL")
     try:
         exam = conn.execute(
-            "SELECT * FROM exams WHERE anon_id=?", (anon_id,)
+            "SELECT anon_id, version, file_path, grade_data FROM exams WHERE anon_id=?", (anon_id,)
         ).fetchone()
         if not exam:
             raise ValueError(f"Exam {anon_id} not found")
@@ -1204,7 +1204,7 @@ def _enqueue_and_start(anon_ids: list):
 @app.route("/grade/<anon_id>", methods=["POST"])
 def grade_one(anon_id):
     db = get_db()
-    exam = db.execute("SELECT * FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
+    exam = db.execute("SELECT anon_id, version, file_path, grade_data FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
     if not exam:
         flash("Exam not found.", "danger")
         return redirect(url_for("exams"))
@@ -1872,7 +1872,7 @@ def docs():
 @app.route("/exam/<anon_id>/report/update", methods=["POST"])
 def update_report(anon_id):
     db   = get_db()
-    exam = db.execute("SELECT * FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
+    exam = db.execute("SELECT anon_id, grade_data FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
     if not exam or not exam["grade_data"]:
         return jsonify({"error": "No graded data for this exam"}), 404
 
@@ -2031,7 +2031,7 @@ def analytics():
     q_version      = request.args.get("q_version", "").upper() or None
 
     # Main query — drives distribution, band, and summary stats
-    query  = "SELECT * FROM exams WHERE grade_data IS NOT NULL"
+    query  = "SELECT grade_data FROM exams WHERE grade_data IS NOT NULL"
     params = []
     if version_filter:
         query += " AND version=?"
@@ -2051,7 +2051,7 @@ def analytics():
             pct_scores.append(round(earned / possible * 100, 2))
 
     # Question stats — separate query filtered by q_version only
-    q_query  = "SELECT * FROM exams WHERE grade_data IS NOT NULL"
+    q_query  = "SELECT grade_data FROM exams WHERE grade_data IS NOT NULL"
     q_params = []
     if q_version:
         q_query += " AND version=?"
