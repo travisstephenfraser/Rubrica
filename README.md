@@ -39,12 +39,13 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Faint pencil handling** — 2x contrast enhancement on exam images before grading
 - **Deterministic scoring** — temperature 0.0 on all API calls
 - **Feedback sanitizer** — strips AI deliberation language and em/en dashes from all student-facing feedback
+- **Shared scoring module** — `scoring.py` is the single source of truth for sub-part consolidation, feedback sanitization, score recalculation, and letter grade assignment; used by both production and audit pipelines
 - **Score recalculation** — sub-part consolidation and normalization run in Python after API response
 - **JSON retry** — automatic retry on malformed Claude responses with persistent error logging
 
 ### Grading Audit
 
-- **Independent re-grading** — `audit_grader.py` re-grades stratified samples using Claude Opus 4.6 as a reference scorer
+- **Independent re-grading** — `audit_grader.py` re-grades stratified samples using Gemini 3.1 Pro (cross-family) or Claude Opus 4.6 (within-family) as reference scorers
 - **ETS benchmark metrics** — exact match, adjacent agreement, MAE, bias, and letter grade agreement
 - **PDF validation report** — `generate_audit_report.py` produces a faculty-ready report with methodology, benchmarks, sample size recommendations, and references
 
@@ -83,6 +84,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 |---|---|
 | Web framework | Flask 3.x |
 | AI grading | `claude-sonnet-4-6` (vision, via Anthropic API) |
+| AI audit | `gemini-3.1-pro-preview` (default cross-family) / `claude-opus-4-6` (fallback) |
 | AI name extraction | `llama3.2-vision` via Ollama (local, on-device) |
 | PDF handling | pypdf, pdfplumber |
 | Document parsing | python-docx |
@@ -132,8 +134,10 @@ Open `http://localhost:5000` in your browser.
 ```
 Rubrica/
 ├── grader.py                # Flask app — all routes and business logic
-├── audit_grader.py          # Independent re-grading audit (Opus 4.6 reference scorer)
+├── scoring.py               # Shared scoring pipeline (consolidation, sanitization, finalization)
+├── audit_grader.py          # Independent re-grading audit (Gemini 3.1 Pro / Opus 4.6)
 ├── generate_audit_report.py # PDF validation report from audit results
+├── generate_testing_report.py # Testing analysis report generator
 ├── generate_rubric.py       # Generates Red exam rubric PDF (ReportLab)
 ├── generate_rubric_green.py # Generates Green exam rubric PDF (ReportLab)
 ├── requirements.txt         # Python dependencies
@@ -150,16 +154,16 @@ Rubrica/
 
 ## Validation and Research
 
-Rubrica's grading pipeline and audit methodology are grounded in established psychometric standards and recent AI grading research. A dedicated testing agent (`/testing`) uses Claude Opus 4.6 as an independent reference scorer to validate production grades assigned by Claude Sonnet 4.6.
+Rubrica's grading pipeline and audit methodology are grounded in established psychometric standards and recent AI grading research. The audit system (`audit_grader.py`) uses Gemini 3.1 Pro as a cross-family reference scorer to validate production grades assigned by Claude Sonnet 4.6, with Claude Opus 4.6 available as a within-family fallback.
 
 ### Audit Protocol
 
-The testing agent re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Preliminary validation across 7 exams (196 scored items) produced:
+The audit re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Validation across 16 exams (448 scored items) with Gemini 3.1 Pro produced:
 
-- **88% exact score match** (ETS threshold: >= 70%)
+- **85% exact score match** (ETS threshold: >= 70%)
 - **98% within-1-point agreement** (ETS threshold: >= 95%)
-- **0.10 pt mean absolute error** per question
-- **+2.01 pt mean bias** (production model slightly generous, favoring students)
+- **0.07 pt mean absolute error** per question
+- **+1.28 pt mean bias** (production model slightly generous, favoring students)
 
 The dual-scoring validation model follows the framework recommended by ETS for automated essay scoring systems (Williamson et al., 2012) and mirrors the independent re-scoring methodology used by Gradescope at UC Berkeley (Singh et al., 2017).
 
