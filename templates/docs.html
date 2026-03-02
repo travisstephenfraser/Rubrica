@@ -378,6 +378,8 @@
       <li>Private Mode suppresses all name/SID columns across Results, Roster, and Reports simultaneously.</li>
       <li><strong>Grade adjustment:</strong> expand any row's Details panel to edit per-question
           earned points inline; changes update the summary row live and save via AJAX.</li>
+      <li><strong>Reviewed checkmark:</strong> per-exam toggle to track review progress; reviewed rows
+          get a green highlight that persists across sessions and page reloads.</li>
       <li><strong>Summary CSV:</strong> one row per student — Anon ID, Name, SID, Version, Batch,
           Score, Percentage, Letter Grade, Overall Feedback.</li>
       <li><strong>Detailed CSV:</strong> same fixed columns plus three columns per question
@@ -404,46 +406,67 @@
     <h2>Validation and Research</h2>
     <p>
       Rubrica's grading pipeline and audit methodology are grounded in established psychometric
-      standards and recent AI grading research. A dedicated testing agent uses Claude Opus 4.6 as an
-      independent reference scorer to validate production grades assigned by Claude Sonnet 4.6.
+      standards and recent AI grading research. The audit system uses Gemini 3.1 Pro as a cross-family
+      reference scorer to validate production grades assigned by Claude Sonnet 4.6, with Claude Opus 4.6
+      available as a within-family fallback. A blind validation analyst (with no knowledge of pipeline
+      internals) independently evaluates inter-rater reliability, bias, and feedback quality.
     </p>
 
     <h3>Audit Protocol</h3>
     <p>
       The audit system (<code>audit_grader.py</code>) re-grades stratified random samples under
       identical conditions (same rubric, same anonymized pages, temperature 0.0) and computes
-      inter-rater reliability metrics at the individual question level. A PDF validation report
-      (<code>generate_audit_report.py</code>) can be generated for faculty review.
+      inter-rater reliability metrics at the individual question level. All per-question metrics
+      are stratified by rubric version, since different versions have different questions and point
+      allocations. Reports are generated for faculty review:
+      <code>generate_audit_report.py</code> (ETS benchmark report),
+      <code>generate_review_checklist.py</code> (flagged exam review workflow), and
+      <code>generate_presentation_bundle.py</code> (combined PDF with title page, TOC,
+      and all validation documents).
     </p>
     <div class="row g-3 mb-3">
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-2">
         <div class="stat-card">
-          <div class="num">88%</div>
-          <div class="lbl">Exact Score Match<br><small class="text-muted">ETS threshold: >= 70%</small></div>
+          <div class="num">0.96</div>
+          <div class="lbl">ICC<br><small class="text-muted">Excellent (>= 0.90)</small></div>
         </div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-2">
         <div class="stat-card">
-          <div class="num">98%</div>
+          <div class="num">0.91</div>
+          <div class="lbl">QWK<br><small class="text-muted">ETS threshold: >= 0.70</small></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="stat-card">
+          <div class="num">91%</div>
+          <div class="lbl">Exact Match<br><small class="text-muted">ETS threshold: >= 70%</small></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-2">
+        <div class="stat-card">
+          <div class="num">96%</div>
           <div class="lbl">Within-1-Point<br><small class="text-muted">ETS threshold: >= 95%</small></div>
         </div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-2">
         <div class="stat-card">
-          <div class="num">0.10</div>
-          <div class="lbl">Mean Abs. Error (pts)<br><small class="text-muted">Target: < 1.0 pt</small></div>
+          <div class="num">80%</div>
+          <div class="lbl">Grade Agreement<br><small class="text-muted">ETS threshold: >= 80%</small></div>
         </div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-md-2">
         <div class="stat-card">
-          <div class="num">+2.01</div>
-          <div class="lbl">Mean Bias (pts)<br><small class="text-muted">Consistent, favors students</small></div>
+          <div class="num">+0.42</div>
+          <div class="lbl">Mean Bias (pts)<br><small class="text-muted">Sonnet slightly generous</small></div>
         </div>
       </div>
     </div>
     <p class="text-muted small">
-      Preliminary results from n=7 exams (196 scored items). Full validation targets n=30+ per
-      Fleiss (1981) for reliable standard deviation estimation.
+      Results from n=30 stratified audit (15 RED, 15 GREEN; 840 scored items) using Gemini 3.1 Pro
+      as cross-family reference scorer. The 6 grade mismatches (20%) trace to specific root causes:
+      3 Gemini image-reading errors on MC items and 2 answer-key interpretation disputes on expected
+      utility questions. All metrics meet or exceed ETS operational thresholds.
     </p>
 
     <h3>Research-Backed Safeguards</h3>
@@ -509,7 +532,8 @@ exams (
   file_path    TEXT,          -- path to individual exam PDF on disk
   uploaded_at  TIMESTAMP,
   graded_at    TIMESTAMP,
-  grade_data   TEXT           -- JSON blob: scores, feedback, totals, letter grade
+  grade_data   TEXT,          -- JSON blob: scores, feedback, totals, letter grade
+  reviewed     INTEGER        -- 0/1: instructor review checkmark (persists across sessions)
 )
 
 -- Roster: class list for fuzzy name/SID matching at upload time (local only)
@@ -526,8 +550,12 @@ roster (
     <h2>File Storage Layout</h2>
 <pre>exam_grader/
 ├── grader.py                # Flask app — all routes and business logic
-├── audit_grader.py          # Independent re-grading audit (Opus 4.6 reference scorer)
+├── scoring.py               # Shared scoring pipeline (consolidation, sanitization, finalization)
+├── audit_grader.py          # Independent re-grading audit (Gemini 3.1 Pro / Opus 4.6)
 ├── generate_audit_report.py # PDF validation report from audit results
+├── generate_testing_report.py   # Testing analysis report generator
+├── generate_presentation_bundle.py # Combined PDF bundle (title + TOC + all reports)
+├── generate_review_checklist.py    # Review workflow PDF with flagged exams
 ├── requirements.txt         # flask, anthropic, pypdf, pypdfium2, pdfplumber, python-docx
 ├── data/
 │   ├── exam_grader.db       # SQLite: all name↔ID mappings + grade data
