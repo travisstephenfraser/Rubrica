@@ -77,7 +77,7 @@
   <tbody>
     {% for r in graded %}
     {% set pct = (r.total_earned / r.total_possible * 100) if r.total_possible else 0 %}
-    <tr>
+    <tr id="row-{{ r.anon_id }}"{% if r.reviewed %} style="border-left:4px solid #198754; background-color: rgba(25,135,84,0.06)"{% endif %}>
       <td><span class="anon-id">{{ r.anon_id }}</span></td>
       {% if show_names and not private_mode %}
         <td>{{ r.student_name }}</td>
@@ -126,6 +126,10 @@
            class="btn btn-sm btn-outline-primary">Report</a>
         <a href="/exam/{{ r.anon_id }}?from=results" target="_blank"
            class="btn btn-sm btn-outline-secondary">Scan</a>
+        <button class="btn btn-sm {{ 'btn-success' if r.reviewed else 'btn-outline-success' }}"
+                id="rev-btn-{{ r.anon_id }}"
+                onclick="toggleReviewed('{{ r.anon_id }}')"
+                title="{{ 'Reviewed' if r.reviewed else 'Mark as reviewed' }}">&#10003;</button>
       </td>
     </tr>
     <!-- Expandable detail row -->
@@ -231,6 +235,30 @@ window.toggleAllDetails = function(expand) {
     pctEl.textContent = pct.toFixed(1) + '%';
     pctEl.className   = 'fw-semibold ' + pctClass(pct);
   });
+
+  // Toggle reviewed state via AJAX
+  window.toggleReviewed = function (anonId) {
+    var btn = document.getElementById('rev-btn-' + anonId);
+    btn.disabled = true;
+    fetch('/exam/' + anonId + '/toggle-reviewed', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var row = document.getElementById('row-' + anonId);
+        if (d.reviewed) {
+          btn.className = 'btn btn-sm btn-success';
+          btn.title = 'Reviewed';
+          row.style.borderLeft = '4px solid #198754';
+          row.style.backgroundColor = 'rgba(25,135,84,0.06)';
+        } else {
+          btn.className = 'btn btn-sm btn-outline-success';
+          btn.title = 'Mark as reviewed';
+          row.style.borderLeft = '';
+          row.style.backgroundColor = '';
+        }
+        btn.disabled = false;
+      })
+      .catch(function () { btn.disabled = false; });
+  };
 
   // Save via AJAX
   window.saveAdjustments = function (anonId) {

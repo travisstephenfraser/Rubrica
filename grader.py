@@ -230,6 +230,7 @@ def init_db():
         ("rubrics", "rubric_file_path", "TEXT"),
         ("exams",   "student_sid",      "TEXT"),
         ("rubrics", "total_points",     "REAL"),
+        ("exams",   "reviewed",         "INTEGER DEFAULT 0"),
     ]
     for table, col, typedef in migrations:
         cols = [row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -1415,6 +1416,7 @@ def results():
             "scores":       gd.get("scores", []),
             "boundary_check": gd.get("boundary_check"),
             "review_flags": gd.get("review_flags", []),
+            "reviewed":     bool(row["reviewed"]),
         })
 
     versions = db.execute(
@@ -1431,6 +1433,18 @@ def results():
                            batches=[r["batch"] for r in batches],
                            version_filter=version_filter,
                            batch_filter=batch_filter)
+
+
+@app.route("/exam/<anon_id>/toggle-reviewed", methods=["POST"])
+def toggle_reviewed(anon_id):
+    db = get_db()
+    exam = db.execute("SELECT reviewed FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
+    if not exam:
+        return jsonify({"error": "Exam not found"}), 404
+    new_val = 0 if exam["reviewed"] else 1
+    db.execute("UPDATE exams SET reviewed=? WHERE anon_id=?", (new_val, anon_id))
+    db.commit()
+    return jsonify({"reviewed": bool(new_val)})
 
 
 # ---------------------------------------------------------------------------
