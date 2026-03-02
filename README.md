@@ -48,6 +48,9 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Independent re-grading** — `audit_grader.py` re-grades stratified samples using Gemini 3.1 Pro (cross-family) or Claude Opus 4.6 (within-family) as reference scorers
 - **ETS benchmark metrics** — exact match, adjacent agreement, MAE, bias, and letter grade agreement
 - **PDF validation report** — `generate_audit_report.py` produces a faculty-ready report with methodology, benchmarks, sample size recommendations, and references
+- **Blind validation analysis** — independent testing agent analyzes audit data with no knowledge of pipeline internals; stratifies metrics by rubric version
+- **Presentation bundle** — `generate_presentation_bundle.py` merges title page, TOC, pipeline overview, per-version analytics, validation reports, and review checklist into a single PDF
+- **Review checklist** — `generate_review_checklist.py` produces a review workflow PDF with flagged exams and high-disagreement questions
 
 ### Privacy
 
@@ -59,6 +62,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 ### Results and Export
 
 - **Inline score adjustment** — edit per-question earned points after grading; saves via AJAX with live preview
+- **Reviewed checkmark** — per-exam toggle to track review progress; persists across sessions with row highlighting
 - **Grade management** — grade, re-grade, or clear grades per-exam or in bulk; Select Ungraded for batch operations
 - **Student reports** — printable per-student report with score card, progress bar, and question breakdown
 - **CSV export** — summary (one row per student) and detailed (one row per question) formats
@@ -138,6 +142,8 @@ Rubrica/
 ├── audit_grader.py          # Independent re-grading audit (Gemini 3.1 Pro / Opus 4.6)
 ├── generate_audit_report.py # PDF validation report from audit results
 ├── generate_testing_report.py # Testing analysis report generator
+├── generate_presentation_bundle.py # Combined PDF bundle (title + TOC + all reports)
+├── generate_review_checklist.py    # Review workflow PDF with flagged exams
 ├── requirements.txt         # Python dependencies
 ├── build_info.json          # Auto-generated build metadata (commit, branch, date)
 ├── data/                    # Local only — excluded from version control
@@ -156,12 +162,19 @@ Rubrica's grading pipeline and audit methodology are grounded in established psy
 
 ### Audit Protocol
 
-The audit re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Validation across 16 exams (448 scored items) with Gemini 3.1 Pro produced:
+The audit re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Validation across 30 exams (15 RED, 15 GREEN; 840 scored items) with Gemini 3.1 Pro produced:
 
-- **85% exact score match** (ETS threshold: >= 70%)
-- **98% within-1-point agreement** (ETS threshold: >= 95%)
-- **0.07 pt mean absolute error** per question
-- **+1.28 pt mean bias** (production model slightly generous, favoring students)
+| Metric | Result | ETS Threshold |
+|---|---|---|
+| ICC (absolute agreement) | **0.96** (excellent) | >= 0.75 good, >= 0.90 excellent |
+| Quadratic Weighted Kappa | **0.91** (excellent) | >= 0.70 |
+| Exact score match | **91%** | >= 70% |
+| Within-1-point agreement | **96%** | >= 95% |
+| Letter grade agreement | **80%** | >= 80% |
+| Mean absolute error | **0.25 pt** per question | < 1.0 pt |
+| Mean bias (Sonnet - Gemini) | **+0.42 pt** (Sonnet slightly generous) | Near 0 |
+
+All per-question metrics are stratified by rubric version, since RED and GREEN exams have different questions and point allocations. An independent blind validation analyst (with no knowledge of pipeline internals) confirmed that the 6 grade mismatches (20%) concentrate at letter grade boundaries and trace to specific root causes: 3 Gemini image-reading errors on multiple-choice items, and 2 answer-key interpretation disputes on expected utility questions.
 
 The dual-scoring validation model follows the framework recommended by ETS for automated essay scoring systems (Williamson et al., 2012) and mirrors the independent re-scoring methodology used by Gradescope at UC Berkeley (Singh et al., 2017).
 
