@@ -70,6 +70,7 @@
       <th>Score</th>
       <th>%</th>
       <th>Grade</th>
+      <th class="text-end">Safeguards</th>
       <th></th>
     </tr>
   </thead>
@@ -101,11 +102,18 @@
           {% elif r.letter_grade == 'D' %}bg-warning
           {% else %}bg-danger{% endif %}
           fs-6">{{ r.letter_grade }}</span>
+      </td>
+      <td class="text-end">
         {% if r.boundary_check %}
-        <span class="text-success ms-1" title="Boundary verified: {{ r.boundary_check.result }} ({{ r.boundary_check.pass_1.pct }}% / {{ r.boundary_check.pass_2.pct }}%)">&#10003;</span>
+        <span class="text-success" title="Boundary verified: {{ r.boundary_check.result }} ({{ r.boundary_check.pass_1.pct }}% / {{ r.boundary_check.pass_2.pct }}%)">&#10003;</span>
         {% endif %}
-        {% if r.review_flags %}
-        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge bg-warning text-dark ms-1 text-decoration-none" title="{% for f in r.review_flags %}{{ f.question }}: {{ f.reason }}{% if not loop.last %}; {% endif %}{% endfor %}">&#9888; {{ r.review_flags|length }}</a>
+        {% set hw_flags = r.review_flags|selectattr('reason', 'equalto', 'handwriting')|list if r.review_flags else [] %}
+        {% set other_flags = r.review_flags|rejectattr('reason', 'equalto', 'handwriting')|list if r.review_flags else [] %}
+        {% if hw_flags %}
+        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge ms-1 text-decoration-none" style="background-color:#e67e22;color:#fff" title="Handwriting: {% for f in hw_flags %}{{ f.question }}{% if not loop.last %}, {% endif %}{% endfor %}">&#9650; {{ hw_flags|length }}</a>
+        {% endif %}
+        {% if other_flags %}
+        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge bg-warning text-dark ms-1 text-decoration-none" title="{% for f in other_flags %}{{ f.question }}: {{ f.reason }}{% if not loop.last %}; {% endif %}{% endfor %}">&#9888; {{ other_flags|length }}</a>
         {% endif %}
       </td>
       <td class="d-flex gap-1">
@@ -122,7 +130,7 @@
     </tr>
     <!-- Expandable detail row -->
     <tr class="collapse" id="detail-{{ r.anon_id }}">
-      <td colspan="{% if show_names and not private_mode %}9{% else %}7{% endif %}" class="bg-light">
+      <td colspan="{% if show_names and not private_mode %}10{% else %}8{% endif %}" class="bg-light">
         <div class="p-3">
           <h6 class="text-muted mb-2">Overall Feedback</h6>
           <p>{{ r.overall_feedback }}</p>
@@ -143,11 +151,16 @@
             <tbody>
               {% for s in r.scores %}
               {% set q_flags = (r.review_flags or [])|selectattr('question', 'equalto', s.question)|list %}
-              <tr{% if q_flags %} class="table-warning"{% endif %}>
+              {% set is_hw = q_flags and q_flags[0].reason == 'handwriting' %}
+              <tr{% if q_flags %} class="{{ 'table-warning' }}"{% endif %}{% if is_hw %} style="border-left:3px solid #e67e22"{% endif %}>
                 <td>
                   {{ s.question }}
                   {% if q_flags %}
-                  <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-warning text-decoration-none" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</a>
+                    {% if is_hw %}
+                    <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-decoration-none" style="color:#e67e22" title="Handwriting uncertainty">&#9650;</a>
+                    {% else %}
+                    <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-warning text-decoration-none" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</a>
+                    {% endif %}
                   {% endif %}
                 </td>
                 <td>

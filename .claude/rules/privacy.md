@@ -6,6 +6,7 @@ Student data protection is non-negotiable. Every change must preserve these inva
 - **Cover pages (page 0) are never sent to Claude.** Cover OCR runs exclusively through local Ollama. Do not change this boundary.
 - **Roster matching is local-only.** Fuzzy matching runs in pure Python. No roster data goes to any API.
 - **Private Mode hides names in the UI** via CSS opacity and template conditionals. If adding new views that display student info, respect `session["private_mode"]`.
+- **Cover page blur must persist during page transitions.** In the scan viewer (`exam_detail.html`), keep the blur filter on the `<img>` until the new page's `onload` fires. Setting `img.src` before removing the blur class causes a flash of the unblurred cover. This has been fixed twice; do not regress it.
 - **anon_id generation uses `secrets.token_urlsafe`** with uniqueness verification. Do not downgrade to predictable IDs.
 - When in doubt about whether something constitutes PII leakage, treat it as a violation and don't do it.
 - **Never push personal information or API keys to any remote repository.** This includes student data, `.env` files, API keys, credentials, and any other secrets. Verify staged files before committing.

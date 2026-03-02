@@ -124,7 +124,17 @@ const privateMode = {{ 'true' if private_mode else 'false' }};
 
 function showPage(num) {
   const img = document.getElementById('page-img');
-  img.classList.toggle('cover-blurred', num === 0 && privateMode);
+  const shouldBlur = num === 0 && privateMode;
+
+  // If leaving the cover page, keep blur until the new image loads
+  // to prevent a flash of the unblurred cover during the network fetch.
+  if (!shouldBlur && privateMode) {
+    img.classList.add('cover-blurred');
+    img.onload = () => { img.classList.remove('cover-blurred'); img.onload = null; };
+  } else {
+    img.classList.toggle('cover-blurred', shouldBlur);
+    img.onload = null;
+  }
   img.src = `/exam/${anonId}/page/${num}`;
   document.getElementById('page-label').textContent = num === 0
     ? 'Cover page — not sent to Claude during grading'

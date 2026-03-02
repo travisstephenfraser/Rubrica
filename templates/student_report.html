@@ -109,21 +109,33 @@
         {% for s in gd.scores %}
         {% set q_pct = (s.earned_points / s.max_points * 100) if s.max_points else 0 %}
         {% set q_flags = gd.get('review_flags', [])|selectattr('question', 'equalto', s.question)|list %}
+        {% set is_hw = q_flags and q_flags[0].reason == 'handwriting' %}
         <tr class="
           {% if q_flags %}table-warning
           {% elif s.earned_points == s.max_points %}table-success
           {% elif q_pct < 70 %}table-danger
-          {% endif %}">
+          {% endif %}"{% if is_hw %} style="border-left:3px solid #e67e22"{% endif %}>
           <td class="fw-semibold">
             {{ s.question }}
             {% if q_flags %}
-            <span class="text-warning" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</span>
+              {% if is_hw %}
+              <span style="color:#e67e22" title="Handwriting uncertainty">&#9650;</span>
+              {% else %}
+              <span class="text-warning" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</span>
+              {% endif %}
             {% endif %}
           </td>
           <td class="font-monospace">{{ s.earned_points }} / {{ s.max_points }}</td>
           <td class="text-muted small">
             {{ s.feedback }}
-            {% if q_flags %}<br><span class="badge bg-warning text-dark">Needs review</span>{% endif %}
+            {% if q_flags %}
+              <br>
+              {% if is_hw %}
+              <span class="badge text-white" style="background-color:#e67e22">Handwriting - verify answer</span>
+              {% else %}
+              <span class="badge bg-warning text-dark">Needs review</span>
+              {% endif %}
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
