@@ -104,6 +104,9 @@
         {% if r.boundary_check %}
         <span class="text-success ms-1" title="Boundary verified: {{ r.boundary_check.result }} ({{ r.boundary_check.pass_1.pct }}% / {{ r.boundary_check.pass_2.pct }}%)">&#10003;</span>
         {% endif %}
+        {% if r.review_flags %}
+        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge bg-warning text-dark ms-1 text-decoration-none" title="{% for f in r.review_flags %}{{ f.question }}: {{ f.reason }}{% if not loop.last %}; {% endif %}{% endfor %}">&#9888; {{ r.review_flags|length }}</a>
+        {% endif %}
       </td>
       <td class="d-flex gap-1">
         <button class="btn btn-sm btn-outline-secondary"
@@ -139,8 +142,14 @@
             </thead>
             <tbody>
               {% for s in r.scores %}
-              <tr>
-                <td>{{ s.question }}</td>
+              {% set q_flags = (r.review_flags or [])|selectattr('question', 'equalto', s.question)|list %}
+              <tr{% if q_flags %} class="table-warning"{% endif %}>
+                <td>
+                  {{ s.question }}
+                  {% if q_flags %}
+                  <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-warning text-decoration-none" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</a>
+                  {% endif %}
+                </td>
                 <td>
                   <input type="number"
                          class="form-control form-control-sm earned-input"

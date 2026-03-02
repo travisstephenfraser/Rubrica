@@ -5,6 +5,8 @@
 - **Workers:** 5 parallel grading threads (constant `GRADE_WORKERS`)
 - **Rubric generators:** `generate_rubric.py` (RED V3), `generate_rubric_green.py` (GREEN V1) -- require `reportlab`
 - **Pre-commit hook:** writes `build_info.json` with commit/branch/date for the About page
+- **Audit model (Gemini):** `gemini-3.1-pro-preview` (constant `AUDIT_MODEL_GEMINI`) -- default cross-family auditor
+- **Audit model (Opus):** `claude-opus-4-6` (constant `AUDIT_MODEL_OPUS`) -- within-family fallback
 - **No em/en dashes in output** -- the feedback sanitizer replaces them with regular dashes (AI tell)
 - **`use_reloader=False`** so Ctrl+C kills the server cleanly
 - **Run:** `C:/Python314/python.exe grader.py` -- serves at `http://localhost:5000`

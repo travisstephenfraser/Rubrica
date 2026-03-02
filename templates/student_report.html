@@ -108,13 +108,23 @@
       <tbody>
         {% for s in gd.scores %}
         {% set q_pct = (s.earned_points / s.max_points * 100) if s.max_points else 0 %}
+        {% set q_flags = gd.get('review_flags', [])|selectattr('question', 'equalto', s.question)|list %}
         <tr class="
-          {% if s.earned_points == s.max_points %}table-success
+          {% if q_flags %}table-warning
+          {% elif s.earned_points == s.max_points %}table-success
           {% elif q_pct < 70 %}table-danger
           {% endif %}">
-          <td class="fw-semibold">{{ s.question }}</td>
+          <td class="fw-semibold">
+            {{ s.question }}
+            {% if q_flags %}
+            <span class="text-warning" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</span>
+            {% endif %}
+          </td>
           <td class="font-monospace">{{ s.earned_points }} / {{ s.max_points }}</td>
-          <td class="text-muted small">{{ s.feedback }}</td>
+          <td class="text-muted small">
+            {{ s.feedback }}
+            {% if q_flags %}<br><span class="badge bg-warning text-dark">Needs review</span>{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

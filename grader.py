@@ -35,6 +35,8 @@ from PIL import Image, ImageEnhance
 from pypdf import PdfReader, PdfWriter
 from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
+from scoring import (letter_grade, clean_feedback,
+                     consolidate_and_clean, finalize_scores)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -67,6 +69,31 @@ _VAGUE_FEEDBACK = re.compile(
     r'^(good\s*(work|job|answer)|mostly correct|needs? improvement|'
     r'well done|incorrect\.?|correct\.?|partial credit(?: awarded)?|'
     r'see rubric|ok(ay)?|fair|poor|excellent|satisfactory)\.?$',
+    re.IGNORECASE,
+)
+
+# Score/feedback contradiction detector patterns.
+# Over-scored: feedback says deduction but score gives full credit.
+# Under-scored: feedback says correct but score is very low.
+_DEDUCTION_LANGUAGE = re.compile(
+    r'\b(0 points?|zero points?|no (?:credit|points?|marks?)|'
+    r'incorrect|wrong answer|not correct|missed|'
+    r'did not|failed to|unable to|omitted|blank|'
+    r'deduct|minus|lost|penalty|error in)\b',
+    re.IGNORECASE,
+)
+_FULL_CREDIT_LANGUAGE = re.compile(
+    r'\b(correct(?:ly)?|full (?:marks?|credit|points?)|'
+    r'perfect|well done|excellent work|earned all)\b',
+    re.IGNORECASE,
+)
+_HANDWRITING_UNCERTAINTY = re.compile(
+    r'\b(appears to (?:say|read|write|show)|seems? to (?:say|read)|'
+    r'hard to (?:read|decipher|make out)|illegib|unread|'
+    r'possibly|unclear (?:hand)?writ|smudg|faint (?:writing|text|answer)|'
+    r'cannot (?:clearly |fully )?(?:read|determine|make out)|'
+    r'difficult to (?:read|interpret)|partially (?:visible|legible)|'
+    r'best guess|interpret(?:ed|ing) as)\b',
     re.IGNORECASE,
 )
 
@@ -270,14 +297,6 @@ def get_rubric(version: str):
         "SELECT * FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
         (version,)
     ).fetchone()
-
-
-def letter_grade(pct: float) -> str:
-    if pct >= 90: return "A"
-    if pct >= 80: return "B"
-    if pct >= 70: return "C"
-    if pct >= 60: return "D"
-    return "F"
 
 
 def _is_boundary_score(pct: float) -> bool:
@@ -796,11 +815,19 @@ FEEDBACK TONE (critical):
 - Good: "Incorrect — confused fixed and variable costs in the calculation."
 - Bad: "Wait, actually I think the student might have meant... let me look again..."
 
+HANDWRITING UNCERTAINTY (required for every question):
+- You MUST include "handwriting_flag" (true or false) in EVERY question object.
+- Set true if: the handwriting is ambiguous, partially illegible, you guessed between
+  two possible letters/digits, the writing is smudged or overlapping, or you made any
+  judgment call about what was written.
+- Set false if: the handwriting is clearly legible with no ambiguity.
+- Omitting this field is an error. Every question MUST have it.
+
 - Respond ONLY with valid JSON in exactly this format:
 {{
   "anon_id": "{exam_row["anon_id"]}",
   "scores": [
-    {{"question": "Q1", "max_points": <n>, "earned_points": <n>, "feedback": "<specific feedback>"}}
+    {{"question": "Q1", "max_points": <n>, "earned_points": <n>, "feedback": "<specific feedback>", "handwriting_flag": false}}
   ],
   "total_earned": <n>,
   "total_possible": <n>,
@@ -885,81 +912,8 @@ FEEDBACK TONE (critical):
     if data is None:
         raise last_error or ValueError("Grading failed: no valid response after retries")
 
-    # Consolidate any sub-part rows (e.g. "Q3a", "Q3 (a)", "Q3-a") into their parent
-    # question ("Q3") by summing points and concatenating feedback.
-    if data.get("scores"):
-        merged = {}   # parent_key -> {max, earned, feedbacks}
-        order  = []   # preserve first-seen order
-        for s in data["scores"]:
-            raw = str(s.get("question", "")).strip()
-            # Strip trailing sub-part suffixes: Q3a / Q3(a) / Q3 (a) / Q3-a / Q3_a / Q3.a
-            parent = re.sub(r'[\s\-_\.]?\(?[a-zA-Z]\)?$', '', raw).strip()
-            if not parent:
-                parent = raw
-            if parent not in merged:
-                merged[parent] = {"max_points": 0, "earned_points": 0, "feedbacks": []}
-                order.append(parent)
-            merged[parent]["max_points"]    += float(s.get("max_points",    0))
-            merged[parent]["earned_points"] += float(s.get("earned_points", 0))
-            fb = s.get("feedback", "").strip()
-            if fb:
-                # Prefix feedback with sub-part label when consolidating
-                label = raw if raw != parent else ""
-                merged[parent]["feedbacks"].append(f"{label}: {fb}" if label else fb)
-        data["scores"] = [
-            {
-                "question":      k,
-                "max_points":    v["max_points"],
-                "earned_points": v["earned_points"],
-                "feedback":      " | ".join(v["feedbacks"]),
-            }
-            for k, v in [(k, merged[k]) for k in order]
-        ]
-
-    # Per-question normalization: scale scores to declared rubric total.
-    rubric_total = rubric["total_points"] if rubric["total_points"] else None
-    if rubric_total and data.get("scores"):
-        sum_max = sum(float(s.get("max_points", 0)) for s in data["scores"])
-        if sum_max > 0 and abs(sum_max - rubric_total) > 0.5:
-            q_scale = rubric_total / sum_max
-            # Scale per-question values without rounding — defer rounding to final totals
-            for s in data["scores"]:
-                s["max_points"]    = s["max_points"]    * q_scale
-                s["earned_points"] = s["earned_points"] * q_scale
-            # Override Claude's reported total so downstream recalculation uses
-            # the normalized value, not the raw rubric sum (e.g. 105).
-            data["total_possible"] = rubric_total
-
-    # Strip deliberation / thinking-out-loud language from feedback.
-    # Claude sometimes leaks its reasoning process ("Wait —", "Actually,", "Let me
-    # re-read...") into feedback strings despite prompt instructions. This regex-based
-    # pass is deterministic: if a sentence matches, it's removed. Scores are unaffected.
-    _DELIBERATION = re.compile(
-        r'\b(wait|actually|hmm|let me re-?(?:read|check|count|examine)|'
-        r'on second thought|re-?reading|I (?:think|miscounted|need to)|'
-        r'looking (?:again|more carefully)|hold on|scratch that|'
-        r'no,|correction:|upon (?:closer|further))\b',
-        re.IGNORECASE,
-    )
-
-    def _clean_feedback(text: str) -> str:
-        if not text:
-            return text
-        # Replace em dashes with regular dashes (AI tell)
-        text = text.replace("\u2014", "-").replace("\u2013", "-")
-        # Split on sentence boundaries, keep only clean sentences
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-        clean = [s for s in sentences if not _DELIBERATION.search(s)]
-        result = " ".join(clean).strip()
-        # If everything was stripped, keep last sentence as fallback (the final answer)
-        return result if result else sentences[-1].strip()
-
-    if data.get("scores"):
-        for s in data["scores"]:
-            if s.get("feedback"):
-                s["feedback"] = _clean_feedback(s["feedback"])
-    if data.get("overall_feedback"):
-        data["overall_feedback"] = _clean_feedback(data["overall_feedback"])
+    # Phase 1: sub-part consolidation + feedback sanitization (shared with audit)
+    consolidate_and_clean(data)
 
     # --- Feedback specificity enforcement ---
     # Vague feedback like "Good work" or "Incorrect" without explanation is
@@ -1015,51 +969,105 @@ FEEDBACK TONE (critical):
                           for item in improved.get("improved", [])}
                 for s in data["scores"]:
                     if s["question"] in fb_map and len(fb_map[s["question"]].split()) >= 10:
-                        s["feedback"] = _clean_feedback(fb_map[s["question"]])
+                        s["feedback"] = clean_feedback(fb_map[s["question"]])
                         _log.info("[FEEDBACK] Refined %s for %s",
                                   s["question"], exam_row["anon_id"])
         except Exception as e:
             _log.warning("[FEEDBACK] Refinement failed for %s: %s", exam_row["anon_id"], e)
 
-    # Recalculate total_earned from individual scores — Claude's summary total sometimes
-    # diverges from its own per-question scores due to rounding (e.g. 18 x 3.33 = 59.94
-    # instead of 60).  Keep total_possible as Claude reported it (correctly read from the
-    # rubric), but derive earned by subtracting actual missed points from that total.
-    # All math stays full-precision; rounding happens once at the very end.
-    if data.get("scores"):
-        sum_possible = sum(float(s.get("max_points",    0)) for s in data["scores"])
-        sum_earned   = sum(float(s.get("earned_points", 0)) for s in data["scores"])
-        missed = sum_possible - sum_earned
-        reported_possible = float(data.get("total_possible", sum_possible))
-        data["total_earned"] = max(reported_possible - missed, 0)
-
-    # Normalize total_possible to nearest integer when rubric point values
-    # don't divide evenly (e.g. 18 x 3.33 = 59.94 instead of 60).
-    # If the sum is within 0.5 of a whole number, scale both values to that integer.
-    raw_possible = data.get("total_possible", 0)
-    intended     = round(raw_possible)
-    if intended > 0 and abs(raw_possible - intended) < 0.5:
-        scale = intended / raw_possible
-        data["total_earned"]   = data.get("total_earned", 0) * scale
-        data["total_possible"] = intended
-
-    # Hard cap: earned can never exceed possible
-    if data.get("total_possible", 0) > 0:
-        data["total_earned"] = min(data["total_earned"], data["total_possible"])
-
-    # --- Final rounding (once, after all math) ---
-    # Round totals to 2 decimal places for storage/display
-    data["total_earned"] = round(data["total_earned"], 2)
-    # Round per-question values for display
+    # --- Score/feedback contradiction detection & resolution ---
+    # Catches cases where feedback correctly identifies an error but the numeric
+    # score doesn't reflect it (or vice versa). Resolved via text-only API call.
+    contradiction_resolved = []
+    contradictions = []
     if data.get("scores"):
         for s in data["scores"]:
-            s["max_points"]    = round(s["max_points"], 2)
-            s["earned_points"] = round(s["earned_points"], 2)
+            fb = (s.get("feedback") or "").strip()
+            earned = float(s.get("earned_points", 0))
+            mx = float(s.get("max_points", 1))
+            has_deduction = bool(_DEDUCTION_LANGUAGE.search(fb))
+            has_credit = bool(_FULL_CREDIT_LANGUAGE.search(fb))
+            # Over-scored: feedback says deduction but score gives full credit.
+            # Skip mixed feedback (both patterns present = consolidated sub-parts).
+            if has_deduction and not has_credit and earned >= mx:
+                contradictions.append(s)
+            # Under-scored: feedback says correct but score is very low.
+            elif has_credit and not has_deduction and earned < mx * 0.5:
+                contradictions.append(s)
 
-    # Recalculate letter grade from the final rounded totals
-    if data.get("total_possible", 0) > 0:
-        pct = data["total_earned"] / data["total_possible"] * 100
-        data["letter_grade"] = letter_grade(pct)
+    if contradictions:
+        _log.info("[CONTRADICTION] %s has %d question(s) with score/feedback contradictions",
+                  exam_row["anon_id"], len(contradictions))
+        rubric_text = rubric["content"] if rubric["content"] else "(rubric not available as text)"
+        c_details = "\n".join(
+            f"- {c['question']}: earned {c['earned_points']}/{c['max_points']}. "
+            f"Feedback: \"{c.get('feedback', '')}\""
+            for c in contradictions
+        )
+        resolve_prompt = (
+            f"You graded an exam but your feedback and scores contradict each other.\n\n"
+            f"RUBRIC:\n{rubric_text}\n\n"
+            f"Contradictions found:\n{c_details}\n\n"
+            f"For each question, re-examine whether the score or the feedback is correct. "
+            f"Return the corrected earned_points and feedback.\n\n"
+            f"Respond ONLY with JSON: "
+            f"{{\"resolved\": [{{\"question\": \"Q1\", \"earned_points\": <n>, \"feedback\": \"...\"}}]}}"
+        )
+        try:
+            resolve_resp = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=2048,
+                temperature=0.0,
+                messages=[{"role": "user", "content": resolve_prompt}],
+            )
+            resolve_text = ""
+            for block in resolve_resp.content:
+                if block.type == "text":
+                    resolve_text = block.text
+                    break
+            rstart = resolve_text.find("{")
+            rend = resolve_text.rfind("}") + 1
+            if rstart != -1 and rend > 0:
+                resolved = json.loads(resolve_text[rstart:rend])
+                fix_map = {item["question"]: item for item in resolved.get("resolved", [])}
+                for s in data["scores"]:
+                    if s["question"] in fix_map:
+                        fix = fix_map[s["question"]]
+                        new_earned = float(fix.get("earned_points", s["earned_points"]))
+                        new_fb = fix.get("feedback", "").strip()
+                        mx = float(s["max_points"])
+                        # Apply only if earned is valid and feedback is substantive
+                        if 0 <= new_earned <= mx and len(new_fb.split()) >= 10:
+                            _log.info("[CONTRADICTION] %s %s: %s/%s -> %s/%s",
+                                      exam_row["anon_id"], s["question"],
+                                      s["earned_points"], s["max_points"],
+                                      new_earned, s["max_points"])
+                            s["earned_points"] = new_earned
+                            s["feedback"] = clean_feedback(new_fb)
+                            contradiction_resolved.append(s["question"])
+        except Exception as e:
+            _log.warning("[CONTRADICTION] Resolution failed for %s: %s", exam_row["anon_id"], e)
+
+    # --- Collect review flags ---
+    # Handwriting flags from the model + contradiction-resolved questions for professor review.
+    flags = []
+    if data.get("scores"):
+        for s in data["scores"]:
+            if s.pop("handwriting_flag", False):
+                flags.append({"question": s["question"], "reason": "handwriting"})
+                _log.info("[HANDWRITING] %s %s flagged for handwriting review",
+                          exam_row["anon_id"], s["question"])
+            elif _HANDWRITING_UNCERTAINTY.search(s.get("feedback", "")):
+                flags.append({"question": s["question"], "reason": "handwriting"})
+                _log.info("[HANDWRITING] %s %s flagged via feedback scan",
+                          exam_row["anon_id"], s["question"])
+    for q in contradiction_resolved:
+        flags.append({"question": q, "reason": "contradiction_resolved"})
+    if flags:
+        data["review_flags"] = flags
+
+    # Phase 2: recalc + hard cap + round + letter grade (shared with audit)
+    finalize_scores(data)
 
     return data
 
@@ -1406,6 +1414,7 @@ def results():
             "overall_feedback": gd.get("overall_feedback", ""),
             "scores":       gd.get("scores", []),
             "boundary_check": gd.get("boundary_check"),
+            "review_flags": gd.get("review_flags", []),
         })
 
     versions = db.execute(
@@ -1869,14 +1878,25 @@ def update_report(anon_id):
 
     gd = json.loads(exam["grade_data"])
 
+    edited_questions = set()
     for i, s in enumerate(gd.get("scores", [])):
         raw = request.form.get(f"earned_{i}", "")
         try:
             val = float(raw)
+            old_val = float(s["earned_points"])
             # Clamp to [0, max_points]
             s["earned_points"] = max(0.0, min(val, float(s["max_points"])))
+            if abs(val - old_val) > 0.001:
+                edited_questions.add(s["question"])
         except (ValueError, TypeError):
             pass  # leave original if the field was blank or invalid
+
+    # Clear review_flags for questions whose scores were manually edited
+    if edited_questions and gd.get("review_flags"):
+        gd["review_flags"] = [f for f in gd["review_flags"]
+                              if f["question"] not in edited_questions]
+        if not gd["review_flags"]:
+            del gd["review_flags"]
 
     # Recalculate totals
     total_earned   = sum(float(s["earned_points"]) for s in gd["scores"])

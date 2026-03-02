@@ -4,6 +4,9 @@ flask>=3.0.0
 # Anthropic Claude SDK (used for grading only — no student PII sent)
 anthropic>=0.40.0
 
+# Google Gemini SDK (cross-family audit grading)
+google-genai>=1.0.0
+
 # Local vision model client — cover-page OCR runs on-device via Ollama
 ollama>=0.3.0
 

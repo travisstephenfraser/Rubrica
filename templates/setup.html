@@ -37,6 +37,13 @@
         <div class="form-text">Matches the version you select when uploading exams.</div>
       </div>
 
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Total Points</label>
+        <input type="number" name="total_points" class="form-control"
+               placeholder="e.g. 100" min="1" step="any" style="max-width:160px">
+        <div class="form-text">Declared point total for the exam. Scores are normalized to this value if per-question points diverge.</div>
+      </div>
+
       <!-- Option 1: upload file -->
       <div class="mb-3">
         <label class="form-label fw-semibold">Upload Rubric File</label>
