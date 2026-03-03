@@ -7,6 +7,7 @@ Only anonymous IDs + exam text + rubric are transmitted.
 
 import base64
 import concurrent.futures
+import copy
 import csv
 import difflib
 import io
@@ -916,6 +917,17 @@ HANDWRITING UNCERTAINTY (required for every question):
     # Phase 1: sub-part consolidation + feedback sanitization (shared with audit)
     consolidate_and_clean(data)
 
+    # --- Raw score snapshot (for audit comparison) ---
+    # Capture model output after shared pipeline (consolidation + sanitization)
+    # but before production-only safeguards (feedback specificity, contradiction
+    # resolution, boundary re-grade). finalize_scores() on the copy produces the
+    # same state audit_grader.py would, making comparison apples-to-apples.
+    raw_snapshot = copy.deepcopy({"scores": data.get("scores", []),
+                                  "total_earned": data.get("total_earned", 0),
+                                  "total_possible": data.get("total_possible", 0)})
+    finalize_scores(raw_snapshot)
+    data["raw_scores"] = raw_snapshot
+
     # --- Feedback specificity enforcement ---
     # Vague feedback like "Good work" or "Incorrect" without explanation is
     # pedagogically useless (Nazaretsky et al. 2026). Detect and refine via
@@ -1277,6 +1289,33 @@ def grade_selected():
     ]
     if not valid_ids:
         return jsonify({"error": "None of the selected exams were found."}), 400
+
+    _enqueue_and_start(valid_ids)
+    return jsonify({"ok": True, "total": len(valid_ids)})
+
+
+@app.route("/regrade-selected", methods=["POST"])
+def regrade_selected():
+    anon_ids = request.form.getlist("anon_ids")
+    if not anon_ids:
+        return jsonify({"error": "No exams selected."}), 400
+
+    db = get_db()
+    placeholders = ",".join("?" * len(anon_ids))
+    valid_ids = [
+        r["anon_id"] for r in db.execute(
+            f"SELECT anon_id FROM exams WHERE anon_id IN ({placeholders})", anon_ids
+        ).fetchall()
+    ]
+    if not valid_ids:
+        return jsonify({"error": "None of the selected exams were found."}), 400
+
+    # Clear existing grades and review status so _grade_one_worker won't skip them
+    db.execute(
+        f"UPDATE exams SET grade_data=NULL, graded_at=NULL, reviewed=0 WHERE anon_id IN ({placeholders})",
+        valid_ids,
+    )
+    db.commit()
 
     _enqueue_and_start(valid_ids)
     return jsonify({"ok": True, "total": len(valid_ids)})
@@ -1905,6 +1944,11 @@ def update_report(anon_id):
         except (ValueError, TypeError):
             pass  # leave original if the field was blank or invalid
 
+        # Update feedback if provided
+        fb = request.form.get(f"feedback_{i}")
+        if fb is not None:
+            s["feedback"] = fb.strip()
+
     # Clear review_flags for questions whose scores were manually edited
     if edited_questions and gd.get("review_flags"):
         gd["review_flags"] = [f for f in gd["review_flags"]
@@ -1930,6 +1974,28 @@ def update_report(anon_id):
         "pct":            round(pct, 1),
         "letter_grade":   gd["letter_grade"]
     })
+
+
+@app.route("/exam/<anon_id>/dismiss-flag", methods=["POST"])
+def dismiss_flag(anon_id):
+    db = get_db()
+    exam = db.execute("SELECT anon_id, grade_data FROM exams WHERE anon_id=?", (anon_id,)).fetchone()
+    if not exam or not exam["grade_data"]:
+        return jsonify({"error": "Exam not found"}), 404
+
+    gd = json.loads(exam["grade_data"])
+    question = request.json.get("question", "")
+
+    flags = gd.get("review_flags", [])
+    gd["review_flags"] = [f for f in flags if f["question"] != question]
+    remaining = len(gd["review_flags"])
+    if not gd["review_flags"]:
+        del gd["review_flags"]
+
+    db.execute("UPDATE exams SET grade_data=? WHERE anon_id=?",
+               (json.dumps(gd), anon_id))
+    db.commit()
+    return jsonify({"ok": True, "remaining_flags": remaining})
 
 
 @app.route("/exam/<anon_id>/report")

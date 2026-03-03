@@ -150,7 +150,7 @@
           </div>
           <table class="table table-sm table-bordered mb-0">
             <thead class="table-secondary">
-              <tr><th>Question</th><th>Earned</th><th>Max</th><th>Feedback</th></tr>
+              <tr><th style="width:5rem">Question</th><th style="width:5rem">Earned</th><th style="width:3rem">Max</th><th>Feedback</th><th style="width:2.5rem"></th></tr>
             </thead>
             <tbody>
               {% for s in r.scores %}
@@ -178,7 +178,23 @@
                          data-anon-id="{{ r.anon_id }}">
                 </td>
                 <td>{{ s.max_points }}</td>
-                <td class="text-muted small">{{ s.feedback }}</td>
+                <td>
+                  <textarea class="form-control form-control-sm feedback-input text-muted small"
+                            name="feedback_{{ loop.index0 }}"
+                            data-anon-id="{{ r.anon_id }}"
+                            rows="3"
+                            style="min-width:12rem">{{ s.feedback }}</textarea>
+                </td>
+                <td class="text-center">
+                  {% if q_flags %}
+                  <button type="button"
+                          class="btn btn-sm btn-outline-secondary flag-dismiss"
+                          data-anon-id="{{ r.anon_id }}"
+                          data-question="{{ s.question }}"
+                          onclick="dismissFlag(this)"
+                          title="Dismiss flag">&#10005;</button>
+                  {% endif %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>
@@ -267,6 +283,9 @@ window.toggleAllDetails = function(expand) {
     document.querySelectorAll('.earned-input[data-anon-id="' + anonId + '"]').forEach(function (inp) {
       data.append(inp.name, inp.value);
     });
+    document.querySelectorAll('.feedback-input[data-anon-id="' + anonId + '"]').forEach(function (inp) {
+      data.append(inp.name, inp.value);
+    });
     btn.disabled    = true;
     btn.textContent = 'Saving…';
     fetch('/exam/' + anonId + '/report/update', { method: 'POST', body: data })
@@ -288,6 +307,55 @@ window.toggleAllDetails = function(expand) {
         btn.disabled    = false;
         btn.textContent = 'Error — retry';
       });
+  };
+
+  window.dismissFlag = function (btn) {
+    var anonId  = btn.dataset.anonId;
+    var question = btn.dataset.question;
+    btn.disabled = true;
+    fetch('/exam/' + anonId + '/dismiss-flag', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: question})
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) return;
+        // Clear question row styling and icon
+        var row = btn.closest('tr');
+        row.classList.remove('table-warning');
+        row.style.borderLeft = '';
+        var icon = row.querySelector('td:first-child a[title]');
+        if (icon) icon.remove();
+        btn.remove();
+        // Update main row badges — decrement or remove
+        var remaining = d.remaining_flags || 0;
+        var mainRow = document.getElementById('row-' + anonId);
+        if (!mainRow) return;
+        if (remaining === 0) {
+          mainRow.querySelectorAll('a.badge').forEach(function (b) {
+            if (b.textContent.match(/[▲⚠]/)) b.remove();
+          });
+        } else {
+          // Re-count by type from remaining dismiss buttons
+          var hwCount = 0, otherCount = 0;
+          document.querySelectorAll('.flag-dismiss[data-anon-id="' + anonId + '"]').forEach(function (fb) {
+            var fRow = fb.closest('tr');
+            if (fRow && fRow.style.borderLeft) hwCount++; else otherCount++;
+          });
+          mainRow.querySelectorAll('a.badge').forEach(function (b) {
+            var txt = b.textContent.trim();
+            if (txt.indexOf('▲') >= 0) {
+              if (hwCount === 0) b.remove();
+              else b.innerHTML = '&#9650; ' + hwCount;
+            } else if (txt.indexOf('⚠') >= 0) {
+              if (otherCount === 0) b.remove();
+              else b.innerHTML = '&#9888; ' + otherCount;
+            }
+          });
+        }
+      })
+      .catch(function () { btn.disabled = false; });
   };
 })();
 </script>

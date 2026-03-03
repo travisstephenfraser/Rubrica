@@ -9,3 +9,7 @@ Two pillars govern all changes: **privacy** (student PII never leaves the machin
 - `audit_grader.py` — standalone audit script; re-grades samples with Opus 4.6 as reference scorer
 - `generate_audit_report.py` — produces PDF validation report from audit results
 - `.claude/agents/testing` — testing agent (`/testing`); blind validation analyst that reads audit JSON and evaluates inter-rater reliability, bias, and feedback quality using external psychometric standards. Has no knowledge of grading pipeline internals by design.
+
+## Server
+
+- **Never start, stop, or restart the Flask server.** Travis manages the server process manually. If a change requires a restart, say so and wait.
