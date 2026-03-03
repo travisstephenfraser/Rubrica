@@ -171,8 +171,8 @@ The audit re-grades stratified random samples of exams under identical condition
 | Exact score match | **91%** | >= 70% |
 | Within-1-point agreement | **96%** | >= 95% |
 | Letter grade agreement | **80%** | >= 80% |
-| Mean absolute error | **0.25 pt** per question | < 1.0 pt |
-| Mean bias (Sonnet - Gemini) | **+0.42 pt** (Sonnet slightly generous) | Near 0 |
+| Mean absolute error | **0.14 pt** per question | < 1.0 pt |
+| Mean bias (Sonnet - Gemini) | **~0.00 pt** (no systematic direction) | Near 0 |
 
 All per-question metrics are stratified by rubric version, since RED and GREEN exams have different questions and point allocations. An independent blind validation analyst (with no knowledge of pipeline internals) confirmed that the 6 grade mismatches (20%) concentrate at letter grade boundaries and trace to specific root causes: 3 Gemini image-reading errors on multiple-choice items, and 2 answer-key interpretation disputes on expected utility questions.
 
