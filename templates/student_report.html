@@ -7,6 +7,8 @@
     nav, .no-print { display: none !important; }
     @page { margin: 1.5cm; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .scan-page { page-break-before: always; }
+    .scan-page img { width: 100%; height: auto; }
   }
   .score-bar .progress { height: 22px; border-radius: 6px; }
   .grade-badge { font-size: 2rem; line-height: 1; }
@@ -26,6 +28,13 @@
         <a href="{{ url_for('student_report', anon_id=exam.anon_id, show_name='1') }}"
            class="btn btn-outline-primary btn-sm">👁 Reveal Name</a>
       {% endif %}
+    {% endif %}
+    {% if page_count %}
+      <a href="{{ url_for('student_report', anon_id=exam.anon_id, show_name='1' if show_name else None) }}"
+         class="btn btn-outline-secondary btn-sm">📄 Report Only</a>
+    {% else %}
+      <a href="{{ url_for('student_report', anon_id=exam.anon_id, scans='1', show_name='1' if show_name else None) }}"
+         class="btn btn-outline-secondary btn-sm">📎 Include Scans</a>
     {% endif %}
     <button onclick="window.print()" class="btn btn-primary btn-sm">🖨 Print Report</button>
   </div>
@@ -155,6 +164,21 @@
 </div>
 {% endif %}
 
+<!-- Exam scan pages (when included) -->
+{% if page_count %}
+<div class="scan-section">
+  {% for p in range(page_count) %}
+  <div class="scan-page text-center">
+    <div class="text-muted small mb-2">
+      {% if p == 0 %}Cover Page{% else %}Page {{ p + 1 }}{% endif %}
+    </div>
+    <img src="{{ url_for('exam_page_image', anon_id=exam.anon_id, page_num=p) }}"
+         class="img-fluid border rounded" alt="Page {{ p + 1 }}">
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 <!-- Bottom action bar (hidden on print) -->
 <div class="d-flex justify-content-between no-print">
   <a href="{{ url_for('results') }}" class="btn btn-outline-secondary btn-sm">← Back to Results</a>
@@ -167,6 +191,13 @@
         <a href="{{ url_for('student_report', anon_id=exam.anon_id, show_name='1') }}"
            class="btn btn-outline-primary btn-sm">👁 Reveal Name</a>
       {% endif %}
+    {% endif %}
+    {% if page_count %}
+      <a href="{{ url_for('student_report', anon_id=exam.anon_id, show_name='1' if show_name else None) }}"
+         class="btn btn-outline-secondary btn-sm">📄 Report Only</a>
+    {% else %}
+      <a href="{{ url_for('student_report', anon_id=exam.anon_id, scans='1', show_name='1' if show_name else None) }}"
+         class="btn btn-outline-secondary btn-sm">📎 Include Scans</a>
     {% endif %}
     <button onclick="window.print()" class="btn btn-primary btn-sm">🖨 Print Report</button>
   </div>

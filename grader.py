@@ -2020,8 +2020,15 @@ def student_report(anon_id):
         return redirect(url_for("results"))
     gd        = json.loads(exam["grade_data"])
     pct       = gd["total_earned"] / gd["total_possible"] * 100 if gd["total_possible"] else 0
-    show_name = request.args.get("show_name") == "1"
-    return render_template("student_report.html", exam=exam, gd=gd, pct=pct, show_name=show_name)
+    show_name    = request.args.get("show_name") == "1"
+    include_scans = request.args.get("scans") == "1"
+    page_count   = 0
+    if include_scans:
+        doc = pdfium.PdfDocument(exam["file_path"])
+        page_count = len(doc)
+        doc.close()
+    return render_template("student_report.html", exam=exam, gd=gd, pct=pct,
+                           show_name=show_name, page_count=page_count)
 
 
 # ---------------------------------------------------------------------------
