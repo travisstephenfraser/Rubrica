@@ -162,7 +162,7 @@ Rubrica's grading pipeline and audit methodology are grounded in established psy
 
 ### Audit Protocol
 
-The audit re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Validation across 30 exams (15 RED, 15 GREEN; 840 scored items) with Gemini 3.1 Pro produced:
+The audit re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Production grades are snapshotted as `raw_scores` after the shared pipeline but before production-only safeguards (feedback specificity, contradiction resolution, boundary re-grade), so the audit compares raw model output to raw model output per the Williamson et al. (2012) framework. Validation across 30 exams (15 RED, 15 GREEN; 840 scored items) with Gemini 3.1 Pro produced:
 
 | Metric | Result | ETS Threshold |
 |---|---|---|
