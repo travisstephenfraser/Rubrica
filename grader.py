@@ -825,11 +825,16 @@ HANDWRITING UNCERTAINTY (required for every question):
 - Set false if: the handwriting is clearly legible with no ambiguity.
 - Omitting this field is an error. Every question MUST have it.
 
+PAGE LOCATION (required for every question):
+- You MUST include "page" (integer) in EVERY question object.
+- Report the [Page N] number where the question's answer appears.
+- If a question spans multiple pages, report the page where the answer begins.
+
 - Respond ONLY with valid JSON in exactly this format:
 {{
   "anon_id": "{exam_row["anon_id"]}",
   "scores": [
-    {{"question": "Q1", "max_points": <n>, "earned_points": <n>, "feedback": "<specific feedback>", "handwriting_flag": false}}
+    {{"question": "Q1", "max_points": <n>, "earned_points": <n>, "feedback": "<specific feedback>", "handwriting_flag": false, "page": <N>}}
   ],
   "total_earned": <n>,
   "total_possible": <n>,
@@ -1067,15 +1072,17 @@ HANDWRITING UNCERTAINTY (required for every question):
     if data.get("scores"):
         for s in data["scores"]:
             if s.pop("handwriting_flag", False):
-                flags.append({"question": s["question"], "reason": "handwriting"})
+                flags.append({"question": s["question"], "reason": "handwriting", "page": s.get("page")})
                 _log.info("[HANDWRITING] %s %s flagged for handwriting review",
                           exam_row["anon_id"], s["question"])
             elif _HANDWRITING_UNCERTAINTY.search(s.get("feedback", "")):
-                flags.append({"question": s["question"], "reason": "handwriting"})
+                flags.append({"question": s["question"], "reason": "handwriting", "page": s.get("page")})
                 _log.info("[HANDWRITING] %s %s flagged via feedback scan",
                           exam_row["anon_id"], s["question"])
     for q in contradiction_resolved:
-        flags.append({"question": q, "reason": "contradiction_resolved"})
+        # Look up page from scores list for contradiction flags
+        q_page = next((s.get("page") for s in data.get("scores", []) if s["question"] == q), None)
+        flags.append({"question": q, "reason": "contradiction_resolved", "page": q_page})
     if flags:
         data["review_flags"] = flags
 
@@ -1487,6 +1494,12 @@ def toggle_reviewed(anon_id):
 
 
 # ---------------------------------------------------------------------------
+def _csv_safe_id(anon_id: str) -> str:
+    """Prevent Excel formula interpretation for IDs starting with - + = @."""
+    if anon_id and anon_id[0] in "-+=@":
+        return f'="{anon_id}"'
+    return anon_id
+
 # Routes: Export CSV
 # ---------------------------------------------------------------------------
 
@@ -1511,7 +1524,7 @@ def export():
         possible = gd.get("total_possible", 0)
         pct = f"{(earned/possible*100):.1f}%" if possible else "N/A"
         writer.writerow([
-            row["anon_id"],
+            _csv_safe_id(row["anon_id"]),
             row["student_name"],
             row["student_sid"] or "",
             row["version"],
@@ -2069,7 +2082,7 @@ def export_detailed():
         scores_by_q = {s["question"]: s for s in gd.get("scores", [])}
 
         fixed = [
-            row["anon_id"],
+            _csv_safe_id(row["anon_id"]),
             row["student_name"],
             row["student_sid"] or "",
             row["version"],

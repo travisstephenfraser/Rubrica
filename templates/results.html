@@ -110,10 +110,10 @@
         {% set hw_flags = r.review_flags|selectattr('reason', 'equalto', 'handwriting')|list if r.review_flags else [] %}
         {% set other_flags = r.review_flags|rejectattr('reason', 'equalto', 'handwriting')|list if r.review_flags else [] %}
         {% if hw_flags %}
-        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge ms-1 text-decoration-none" style="background-color:#e67e22;color:#fff" title="Handwriting: {% for f in hw_flags %}{{ f.question }}{% if not loop.last %}, {% endif %}{% endfor %}">&#9650; {{ hw_flags|length }}</a>
+        <a href="/exam/{{ r.anon_id }}?from=results{% if hw_flags[0].page is defined and hw_flags[0].page %}&amp;page={{ hw_flags[0].page }}{% endif %}" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge ms-1 text-decoration-none" style="background-color:#e67e22;color:#fff" title="Handwriting: {% for f in hw_flags %}{{ f.question }}{% if not loop.last %}, {% endif %}{% endfor %}">&#9650; {{ hw_flags|length }}</a>
         {% endif %}
         {% if other_flags %}
-        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge bg-warning text-dark ms-1 text-decoration-none" title="{% for f in other_flags %}{{ f.question }}: {{ f.reason }}{% if not loop.last %}; {% endif %}{% endfor %}">&#9888; {{ other_flags|length }}</a>
+        <a href="/exam/{{ r.anon_id }}?from=results{% if other_flags[0].page is defined and other_flags[0].page %}&amp;page={{ other_flags[0].page }}{% endif %}" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="badge bg-warning text-dark ms-1 text-decoration-none" title="{% for f in other_flags %}{{ f.question }}: {{ f.reason }}{% if not loop.last %}; {% endif %}{% endfor %}">&#9888; {{ other_flags|length }}</a>
         {% endif %}
       </td>
       <td class="d-flex gap-1">
@@ -124,7 +124,7 @@
         </button>
         <a href="/exam/{{ r.anon_id }}/report" target="_blank"
            class="btn btn-sm btn-outline-primary">Report</a>
-        <a href="/exam/{{ r.anon_id }}?from=results" target="_blank"
+        <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_{{ r.anon_id }}','width=1320,height=1350,scrollbars=yes,resizable=yes');return false;"
            class="btn btn-sm btn-outline-secondary">Scan</a>
         <button class="btn btn-sm {{ 'btn-success' if r.reviewed else 'btn-outline-success' }}"
                 id="rev-btn-{{ r.anon_id }}"
@@ -161,9 +161,9 @@
                   {{ s.question }}
                   {% if q_flags %}
                     {% if is_hw %}
-                    <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-decoration-none" style="color:#e67e22" title="Handwriting uncertainty">&#9650;</a>
+                    <a href="/exam/{{ r.anon_id }}?from=results{% if s.page is defined and s.page %}&amp;page={{ s.page }}{% endif %}" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-decoration-none" style="color:#e67e22" title="Handwriting uncertainty">&#9650;</a>
                     {% else %}
-                    <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-warning text-decoration-none" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</a>
+                    <a href="/exam/{{ r.anon_id }}?from=results{% if s.page is defined and s.page %}&amp;page={{ s.page }}{% endif %}" onclick="window.open(this.href,'scan_'+this.href.split('/')[2],'width=1320,height=1350,scrollbars=yes,resizable=yes');return false;" class="text-warning text-decoration-none" title="{{ q_flags[0].reason|replace('_', ' ')|title }}">&#9888;</a>
                     {% endif %}
                   {% endif %}
                 </td>

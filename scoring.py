@@ -82,7 +82,7 @@ def consolidate_and_clean(data: dict) -> None:
             if not parent:
                 parent = raw
             if parent not in merged:
-                merged[parent] = {"max_points": 0, "earned_points": 0, "feedbacks": []}
+                merged[parent] = {"max_points": 0, "earned_points": 0, "feedbacks": [], "page": s.get("page")}
                 order.append(parent)
             merged[parent]["max_points"]    += float(s.get("max_points",    0))
             merged[parent]["earned_points"] += float(s.get("earned_points", 0))
@@ -97,6 +97,7 @@ def consolidate_and_clean(data: dict) -> None:
                 "max_points":    v["max_points"],
                 "earned_points": v["earned_points"],
                 "feedback":      " | ".join(v["feedbacks"]),
+                **({"page": v["page"]} if v.get("page") is not None else {}),
             }
             for k, v in [(k, merged[k]) for k in order]
         ]

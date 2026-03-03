@@ -145,5 +145,12 @@ function showPage(num) {
       (i === num ? 'btn-secondary' : 'btn-outline-secondary');
   });
 }
+
+// Deep-link: jump to flagged page if ?page=N is present
+var params = new URLSearchParams(window.location.search);
+var reqPage = parseInt(params.get('page'), 10);
+if (!isNaN(reqPage) && reqPage >= 1 && reqPage <= pageCount) {
+    showPage(reqPage - 1);
+}
 </script>
 {% endblock %}
