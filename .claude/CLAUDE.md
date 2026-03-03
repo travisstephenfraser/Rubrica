@@ -10,6 +10,12 @@ Two pillars govern all changes: **privacy** (student PII never leaves the machin
 - `generate_audit_report.py` — produces PDF validation report from audit results
 - `.claude/agents/testing` — testing agent (`/testing`); blind validation analyst that reads audit JSON and evaluates inter-rater reliability, bias, and feedback quality using external psychometric standards. Has no knowledge of grading pipeline internals by design.
 
+## Audit & Bundle Reports
+
+- When generating the audit report or bundle, load the **most recent audit files** until reaching **>= 30 comparisons** (the minimum for reliable QWK/ICC). Do not load all historical audit data.
+- QWK and ICC metrics **must appear** in both the audit report and the bundle whenever n >= 30. If they're missing, the data loading is wrong.
+- **No hardcoded adjusted agreement figures** (e.g. "97% adj. for auditor error"). Those require manual validation of specific mismatches and must not auto-print on future reports.
+
 ## Server
 
 - **Never start, stop, or restart the Flask server.** Travis manages the server process manually. If a change requires a restart, say so and wait.
