@@ -15,7 +15,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 5. **Grade** — Claude Sonnet reads each answer page (with 2x contrast enhancement) and scores against the rubric using only an anonymous ID; boundary scores are automatically re-graded in a second pass; vague feedback is refined to cite specific rubric criteria
 6. **Review & adjust** — inline score editing per question, per-student printable reports, summary and detailed CSV exports; all grades mapped back to names locally
 7. **Analyze** — grade distribution histogram, letter grade breakdown, per-question difficulty charts with version filtering
-8. **Audit** *(optional)* — re-grade a sample with Claude Opus 4.6 as an independent reference scorer; generate a PDF validation report with ETS benchmark comparisons
+8. **Audit** *(optional)* — re-grade a sample with Gemini 3.1 Pro as an independent reference scorer; generate a PDF validation report with ETS benchmark comparisons
 
 ---
 
