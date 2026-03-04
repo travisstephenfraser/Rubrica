@@ -6,11 +6,24 @@
   <title>{% block title %}Rubrica{% endblock %}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
+    html { scrollbar-gutter: stable; }
     [data-bs-theme="light"] body { background: #f8f9fa; }
     [data-bs-theme="dark"] body { background: #1a1a2e; }
     .navbar-brand { font-weight: 700; letter-spacing: 1px; }
     .anon-id { font-family: monospace; font-size: 1.1em; letter-spacing: .1em; }
     .nav-sep { border-left: 1px solid rgba(255,255,255,.15); height: 1.2rem; margin: 0 .25rem; }
+    /* Frosted glass navbar */
+    .navbar-frost {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1030;
+      background: rgba(33, 37, 41, .85);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      backdrop-filter: saturate(180%) blur(20px);
+      transition: background .3s;
+    }
+    .navbar-frost.scrolled { background: rgba(33, 37, 41, .72); }
+    [data-bs-theme="dark"] .navbar-frost { background: rgba(26, 26, 46, .85); }
+    [data-bs-theme="dark"] .navbar-frost.scrolled { background: rgba(26, 26, 46, .72); }
+    body { padding-top: 56px; } /* offset for fixed navbar */
     /* Dark mode: soften bright white elements */
     [data-bs-theme="dark"] .bg-white { background-color: #2b3035 !important; }
     [data-bs-theme="dark"] .bg-light { background-color: #2b3035 !important; }
@@ -21,7 +34,7 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+<nav class="navbar navbar-expand-lg navbar-dark navbar-frost" id="mainNavbar">
   <div class="container">
     <a class="navbar-brand" href="/">Rubrica</a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
@@ -116,7 +129,7 @@
   </div>
 </div>
 
-<div class="container pb-5">
+<div class="container pb-5 mt-4">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
       <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
@@ -281,6 +294,15 @@
   }
 
   tick();
+}());
+
+// Frosted glass: toggle .scrolled on scroll
+(function () {
+  var nav = document.getElementById('mainNavbar');
+  if (!nav) return;
+  window.addEventListener('scroll', function () {
+    nav.classList.toggle('scrolled', window.scrollY > 10);
+  }, { passive: true });
 }());
 </script>
 </body>
