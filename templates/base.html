@@ -9,17 +9,8 @@
     [data-bs-theme="light"] body { background: #f8f9fa; }
     [data-bs-theme="dark"] body { background: #1a1a2e; }
     .navbar-brand { font-weight: 700; letter-spacing: 1px; }
-    .privacy-badge {
-      background: #198754; color: #fff;
-      font-size: .7rem; padding: 2px 8px;
-      border-radius: 12px; vertical-align: middle;
-    }
-    .private-mode-badge {
-      background: #dc3545; color: #fff;
-      font-size: .75rem; padding: 3px 10px;
-      border-radius: 12px; font-weight: 700; letter-spacing: .05em;
-    }
     .anon-id { font-family: monospace; font-size: 1.1em; letter-spacing: .1em; }
+    .nav-sep { border-left: 1px solid rgba(255,255,255,.15); height: 1.2rem; margin: 0 .25rem; }
     /* Dark mode: soften bright white elements */
     [data-bs-theme="dark"] .bg-white { background-color: #2b3035 !important; }
     [data-bs-theme="dark"] .bg-light { background-color: #2b3035 !important; }
@@ -32,45 +23,59 @@
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
   <div class="container">
-    <a class="navbar-brand" href="/">
-      ✒ Rubrica
-      <span class="privacy-badge ms-2">🔒 Local Only</span>
-    </a>
-    <a href="/docs" class="btn btn-outline-light btn-sm ms-3">About</a>
-    {% if private_mode %}<span class="private-mode-badge ms-3">🔴 PRIVATE MODE</span>{% endif %}
-    <div class="navbar-nav ms-auto">
-      <a class="nav-link" href="/">Dashboard</a>
-      <a class="nav-link" href="/setup">Rubrics</a>
-      <a class="nav-link" href="/upload-batch">Upload</a>
-      {% if active_review_id %}
-      <a class="nav-link d-flex align-items-center gap-1" href="/upload-batch/review/{{ active_review_id }}">
-        Scan
-        {% if active_review_ocr_running %}
-        <span class="spinner-border spinner-border-sm" style="width:.6rem;height:.6rem;" role="status"></span>
-        {% else %}
-        <span class="badge bg-warning text-dark" style="font-size:.6rem;">!</span>
+    <a class="navbar-brand" href="/">Rubrica</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+            data-bs-target="#mainNav" aria-controls="mainNav" aria-expanded="false">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="mainNav">
+      {# --- Core workflow --- #}
+      <ul class="navbar-nav me-auto align-items-center">
+        <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link" href="/setup">Rubrics</a></li>
+        <li class="nav-item"><a class="nav-link" href="/upload-batch">Upload</a></li>
+        {% if active_review_id %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center gap-1" href="/upload-batch/review/{{ active_review_id }}">
+            Scan
+            {% if active_review_ocr_running %}
+            <span class="spinner-border spinner-border-sm" style="width:.6rem;height:.6rem;" role="status"></span>
+            {% else %}
+            <span class="badge bg-warning text-dark" style="font-size:.6rem;">!</span>
+            {% endif %}
+          </a>
+        </li>
         {% endif %}
-      </a>
-      {% endif %}
-      <a class="nav-link" href="/exams">Exams</a>
-      <a class="nav-link" href="/results">Results</a>
-      <a class="nav-link" href="/roster" style="color:#6dc8b8 !important">Roster</a>
-      <a class="nav-link" href="/analytics" style="color:#6dc8b8 !important">Analytics</a>
+        <li class="nav-item"><a class="nav-link" href="/exams">Exams</a></li>
+        <li class="nav-item"><a class="nav-link" href="/results">Results</a></li>
+        {# --- Separator + tools --- #}
+        <li class="nav-item d-none d-lg-flex align-items-center"><span class="nav-sep"></span></li>
+        <li class="nav-item"><a class="nav-link" href="/roster">Roster</a></li>
+        <li class="nav-item"><a class="nav-link" href="/analytics">Analytics</a></li>
+        <li class="nav-item"><a class="nav-link" href="/audit">Audit</a></li>
+      </ul>
+      {# --- Utility buttons --- #}
+      <ul class="navbar-nav align-items-center gap-1">
+        <li class="nav-item"><a class="nav-link py-1" href="/docs" title="About Rubrica">About</a></li>
+        <li class="nav-item">
+          <form method="POST" action="/toggle-dark-mode" class="mb-0">
+            <input type="hidden" name="next" value="{{ request.url }}">
+            <button type="submit" class="btn btn-outline-secondary btn-sm" title="Toggle dark mode">
+              {% if dark_mode %}☀{% else %}🌙{% endif %}
+            </button>
+          </form>
+        </li>
+        <li class="nav-item">
+          <form method="POST" action="/toggle-private-mode" class="mb-0">
+            <input type="hidden" name="next" value="{{ request.url }}">
+            <button type="submit" class="btn btn-sm {% if private_mode %}btn-danger{% else %}btn-outline-secondary{% endif %}"
+                    title="{% if private_mode %}Private mode ON - click to disable{% else %}Enable private mode{% endif %}">
+              {% if private_mode %}🔴{% else %}🔒{% endif %}
+            </button>
+          </form>
+        </li>
+      </ul>
     </div>
-    <form method="POST" action="/toggle-dark-mode" class="ms-3">
-      <input type="hidden" name="next" value="{{ request.url }}">
-      <button type="submit" class="btn btn-outline-secondary btn-sm">
-        {% if dark_mode %}☀{% else %}🌙{% endif %}
-      </button>
-    </form>
-    <form method="POST" action="/toggle-private-mode" class="ms-2">
-      <input type="hidden" name="next" value="{{ request.url }}">
-      {% if private_mode %}
-        <button type="submit" class="btn btn-danger btn-sm">Disable Private Mode</button>
-      {% else %}
-        <button type="submit" class="btn btn-outline-danger btn-sm">Private Mode</button>
-      {% endif %}
-    </form>
   </div>
 </nav>
 <!-- Global grading progress banner -->
@@ -88,6 +93,25 @@
     <a id="grade-banner-results" href="/results"
        class="btn btn-outline-light btn-sm d-none">View Results</a>
     <button id="grade-banner-close" type="button"
+            class="btn-close btn-close-white d-none" aria-label="Close"></button>
+  </div>
+</div>
+
+<!-- Global audit progress banner -->
+<div id="audit-banner" class="d-none" style="background:#1a0a2e;border-bottom:2px solid #7c3aed;">
+  <div class="container py-2 d-flex align-items-center gap-3">
+    <span id="audit-banner-label" class="text-white small fw-semibold text-nowrap">Auditing...</span>
+    <div class="progress flex-grow-1" style="height:16px;min-width:80px">
+      <div id="audit-banner-bar"
+           class="progress-bar progress-bar-striped progress-bar-animated"
+           role="progressbar" style="width:0%;background:#7c3aed">0%</div>
+    </div>
+    <span id="audit-banner-counts" class="text-white-50 small text-nowrap"></span>
+    <button id="audit-banner-abort" type="button"
+            class="btn btn-outline-warning btn-sm d-none">Stop</button>
+    <a id="audit-banner-results" href="/audit"
+       class="btn btn-outline-light btn-sm d-none">View Audit</a>
+    <button id="audit-banner-close" type="button"
             class="btn-close btn-close-white d-none" aria-label="Close"></button>
   </div>
 </div>
@@ -183,6 +207,80 @@
   };
 
   tick(); // initial check on every page load
+}());
+
+// Audit banner polling
+(function () {
+  var _poller = null;
+  var banner     = document.getElementById('audit-banner');
+  var bar        = document.getElementById('audit-banner-bar');
+  var label      = document.getElementById('audit-banner-label');
+  var counts     = document.getElementById('audit-banner-counts');
+  var abortBtn   = document.getElementById('audit-banner-abort');
+  var resultsBtn = document.getElementById('audit-banner-results');
+  var closeBtn   = document.getElementById('audit-banner-close');
+
+  closeBtn.addEventListener('click', function () {
+    banner.classList.add('d-none');
+    if (_poller) { clearInterval(_poller); _poller = null; }
+    sessionStorage.setItem('auditBannerDismissed', 'true');
+  });
+
+  abortBtn.addEventListener('click', function () {
+    abortBtn.disabled = true;
+    abortBtn.textContent = 'Stopping...';
+    fetch('/audit/abort', { method: 'POST' }).catch(function () {});
+  });
+
+  function render(data) {
+    var processed = (data.done || 0) + (data.failed || 0);
+    var total = data.total || 1;
+    var pct = Math.round(processed / total * 100);
+    if (data.running) {
+      sessionStorage.removeItem('auditBannerDismissed');
+    } else if (sessionStorage.getItem('auditBannerDismissed') === 'true') {
+      return;
+    }
+    banner.classList.remove('d-none');
+    bar.style.width = pct + '%';
+    bar.textContent = pct + '%';
+    counts.textContent = data.done + ' done, ' + data.failed + ' failed of ' + data.total;
+    if (data.running) {
+      label.textContent = 'Auditing ' + processed + ' of ' + data.total + '...';
+      bar.classList.add('progress-bar-animated', 'progress-bar-striped');
+      abortBtn.classList.remove('d-none');
+      closeBtn.classList.add('d-none');
+      resultsBtn.classList.add('d-none');
+    } else {
+      if (data.aborted) {
+        label.textContent = 'Audit stopped - ' + data.done + ' of ' + data.total + ' completed';
+      } else {
+        label.textContent = data.failed > 0 ? 'Audit complete (with errors)' : 'Audit complete';
+      }
+      bar.classList.remove('progress-bar-animated');
+      abortBtn.classList.add('d-none');
+      closeBtn.classList.remove('d-none');
+      resultsBtn.classList.remove('d-none');
+    }
+  }
+
+  function tick() {
+    fetch('/audit/status')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.total > 0) render(data);
+        if (data.running && !_poller) {
+          _poller = setInterval(tick, 3000);
+        }
+        if (!data.running && _poller) {
+          clearInterval(_poller);
+          _poller = null;
+        }
+      })
+      .catch(function () {});
+  }
+
+  tick();
 }());
 </script>
 </body>

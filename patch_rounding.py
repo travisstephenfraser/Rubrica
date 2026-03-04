@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Travis Fraser
 """
 Patch stored grade_data to fix remainder distribution drift.
 

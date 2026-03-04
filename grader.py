@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Travis Fraser
 """
 Exam Anonymizer & Grader
 ========================
@@ -38,6 +40,9 @@ from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
 from scoring import (letter_grade, clean_feedback,
                      consolidate_and_clean, finalize_scores)
+from audit_grader import (start_audit, get_audit_status, get_cumulative_audit_stats,
+                          AUDIT_DIR, _audit_abort)
+from generate_audit_report import load_audit_data, compute_aggregate, build_report
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -233,7 +238,10 @@ def init_db():
         ("rubrics", "total_points",     "REAL"),
         ("exams",   "reviewed",         "INTEGER DEFAULT 0"),
     ]
+    _ALLOWED_TABLES = {"exams", "rubrics", "roster"}
     for table, col, typedef in migrations:
+        if table not in _ALLOWED_TABLES:
+            raise ValueError(f"Migration target not in allowlist: {table}")
         cols = [row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()]
         if col not in cols:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
@@ -246,6 +254,34 @@ def init_db():
 # ---------------------------------------------------------------------------
 
 _REVIEW_ID_RE = re.compile(r'^[0-9a-f]{16}$')
+
+
+def _extract_json(text: str) -> str | None:
+    """Return the first complete JSON object found in text, or None."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth, in_string, escape = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
 
 
 def _valid_review_id(review_id: str) -> bool:
@@ -537,11 +573,15 @@ def index():
     graded  = db.execute("SELECT COUNT(*) FROM exams WHERE grade_data IS NOT NULL").fetchone()[0]
     rubrics = db.execute("SELECT DISTINCT version FROM rubrics").fetchall()
     versions_with_rubrics = [r["version"] for r in rubrics]
+    roster_count = db.execute("SELECT COUNT(*) FROM roster").fetchone()[0]
+    audit_stats = get_cumulative_audit_stats()
     return render_template("index.html",
                            total=total,
                            graded=graded,
                            ungraded=total - graded,
-                           versions_with_rubrics=versions_with_rubrics)
+                           versions_with_rubrics=versions_with_rubrics,
+                           roster_count=roster_count,
+                           audit_stats=audit_stats)
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +593,6 @@ def setup():
     db = get_db()
     if request.method == "POST":
         version      = request.form.get("version", "").strip().upper()
-        content      = request.form.get("content", "").strip()
         file         = request.files.get("rubric_file")
         total_points = request.form.get("total_points", type=float)
 
@@ -561,28 +600,24 @@ def setup():
             flash("Exam version is required.", "danger")
             return redirect(url_for("setup"))
 
-        # File upload takes priority over typed content
-        rubric_file_path = None
-        if file and file.filename:
-            ext = Path(file.filename).suffix.lower()
-            if ext not in (".pdf", ".docx", ".doc"):
-                flash("Only PDF or Word (.docx) files are supported.", "danger")
-                return redirect(url_for("setup"))
-
-            # Save permanently so we can send the original file to Claude when grading
-            perm_path = RUBRIC_DIR / f"{version}_{secrets.token_hex(6)}{ext}"
-            file.save(str(perm_path))
-            rubric_file_path = str(perm_path)
-
-            # Also extract text as fallback / for display
-            content = extract_rubric_file(str(perm_path), file.filename)
-            if not content or content.startswith("["):
-                # Text extraction failed but keep the file — Claude will read it visually
-                content = f"[See uploaded rubric file — text extraction unavailable for this file]"
-
-        if not content:
-            flash("Provide either a rubric file or type the rubric content.", "danger")
+        if not file or not file.filename:
+            flash("Upload a rubric file (.pdf or .docx).", "danger")
             return redirect(url_for("setup"))
+
+        ext = Path(file.filename).suffix.lower()
+        if ext not in (".pdf", ".docx", ".doc"):
+            flash("Only PDF or Word (.docx) files are supported.", "danger")
+            return redirect(url_for("setup"))
+
+        # Save permanently so we can send the original file to Claude when grading
+        perm_path = RUBRIC_DIR / f"{version}_{secrets.token_hex(6)}{ext}"
+        file.save(str(perm_path))
+        rubric_file_path = str(perm_path)
+
+        # Extract text for display / fallback
+        content = extract_rubric_file(str(perm_path), file.filename)
+        if not content or content.startswith("["):
+            content = f"[See uploaded rubric file — text extraction unavailable for this file]"
 
         db.execute(
             "INSERT INTO rubrics (version, content, rubric_file_path, total_points) VALUES (?, ?, ?, ?)",
@@ -725,6 +760,7 @@ def _grade_exam(exam_row, rubric) -> dict:
     """
     doc   = pdfium.PdfDocument(exam_row["file_path"])
     total = len(doc)
+    doc.close()
     if total < 2:
         raise ValueError("Exam PDF must have at least 2 pages (cover + answers).")
 
@@ -860,7 +896,7 @@ PAGE LOCATION (required for every question):
 
         if full_response.stop_reason == "max_tokens":
             last_error = ValueError("Response was cut off (max_tokens reached). The exam may be too long.")
-            _log.warning("Attempt %d/%d for %s: max_tokens reached (limit=%d)", attempt, MAX_ATTEMPTS, exam_row["anon_id"], token_limit)
+            _log.warning("Attempt %d/%d for %s: max_tokens reached (limit=16384)", attempt, MAX_ATTEMPTS, exam_row["anon_id"])
             continue
 
         response_text = ""
@@ -869,47 +905,14 @@ PAGE LOCATION (required for every question):
                 response_text = block.text
                 break
 
-        start = response_text.find("{")
-        if start == -1:
+        json_str = _extract_json(response_text)
+        if json_str is None:
             last_error = ValueError(f"No JSON found. Claude responded with: {response_text[:500]}")
             _log.warning("Attempt %d/%d for %s: no JSON in response", attempt, MAX_ATTEMPTS, exam_row["anon_id"])
             continue
 
-        # Find matching closing brace by tracking nesting depth.
-        # rfind("}") grabs too much when the model appends commentary
-        # or a second JSON object after the main response.
-        depth = 0
-        end = -1
-        in_string = False
-        escape = False
-        for i in range(start, len(response_text)):
-            ch = response_text[i]
-            if escape:
-                escape = False
-                continue
-            if ch == '\\' and in_string:
-                escape = True
-                continue
-            if ch == '"' and not escape:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-
-        if end == -1:
-            last_error = ValueError(f"Unbalanced JSON braces: {response_text[:500]}")
-            _log.warning("Attempt %d/%d for %s: unbalanced JSON", attempt, MAX_ATTEMPTS, exam_row["anon_id"])
-            continue
-
         try:
-            data = json.loads(response_text[start:end])
+            data = json.loads(json_str)
             break  # success
         except json.JSONDecodeError as e:
             last_error = e
@@ -979,10 +982,9 @@ PAGE LOCATION (required for every question):
                 if block.type == "text":
                     refine_text = block.text
                     break
-            rstart = refine_text.find("{")
-            rend = refine_text.rfind("}") + 1
-            if rstart != -1 and rend > 0:
-                improved = json.loads(refine_text[rstart:rend])
+            refine_json = _extract_json(refine_text)
+            if refine_json:
+                improved = json.loads(refine_json)
                 fb_map = {item["question"]: item["feedback"]
                           for item in improved.get("improved", [])}
                 for s in data["scores"]:
@@ -1043,10 +1045,9 @@ PAGE LOCATION (required for every question):
                 if block.type == "text":
                     resolve_text = block.text
                     break
-            rstart = resolve_text.find("{")
-            rend = resolve_text.rfind("}") + 1
-            if rstart != -1 and rend > 0:
-                resolved = json.loads(resolve_text[rstart:rend])
+            resolve_json = _extract_json(resolve_text)
+            if resolve_json:
+                resolved = json.loads(resolve_json)
                 fix_map = {item["question"]: item for item in resolved.get("resolved", [])}
                 for s in data["scores"]:
                     if s["question"] in fix_map:
@@ -1259,7 +1260,10 @@ def grade_one(anon_id):
 def grade_all():
     db = get_db()
     version_filter = request.form.get("version", "").strip().upper() or None
-    batch_filter   = request.form.get("batch", "").strip() or None
+    try:
+        batch_filter = int(request.form.get("batch", "").strip())
+    except (ValueError, TypeError):
+        batch_filter = None
 
     query  = "SELECT anon_id FROM exams WHERE grade_data IS NULL"
     params = []
@@ -1268,7 +1272,7 @@ def grade_all():
         params.append(version_filter)
     if batch_filter:
         query += " AND batch=?"
-        params.append(int(batch_filter))
+        params.append(batch_filter)
 
     rows     = db.execute(query, params).fetchall()
     exam_ids = [r["anon_id"] for r in rows]
@@ -1358,6 +1362,7 @@ def exam_detail(anon_id):
         return redirect(url_for("exams"))
     doc        = pdfium.PdfDocument(exam["file_path"])
     page_count = len(doc)
+    doc.close()
     return render_template("exam_detail.html", exam=exam, page_count=page_count)
 
 
@@ -1375,7 +1380,10 @@ def clear_grade(anon_id):
 @app.route("/clear-all-grades", methods=["POST"])
 def clear_all_grades():
     version_filter = request.form.get("version", "").strip().upper() or None
-    batch_filter   = request.form.get("batch", "").strip() or None
+    try:
+        batch_filter = int(request.form.get("batch", "").strip())
+    except (ValueError, TypeError):
+        batch_filter = None
     db = get_db()
     query  = "UPDATE exams SET grade_data=NULL, graded_at=NULL WHERE grade_data IS NOT NULL"
     params = []
@@ -1384,7 +1392,7 @@ def clear_all_grades():
         params.append(version_filter)
     if batch_filter:
         query += " AND batch=?"
-        params.append(int(batch_filter))
+        params.append(batch_filter)
     db.execute(query, params)
     count = db.execute("SELECT changes()").fetchone()[0]
     db.commit()
@@ -1432,7 +1440,10 @@ def results():
     db    = get_db()
     show  = request.args.get("show_names") == "1"
     version_filter = request.args.get("version", "").strip().upper() or None
-    batch_filter   = request.args.get("batch", "").strip() or None
+    try:
+        batch_filter = int(request.args.get("batch", "").strip())
+    except (ValueError, TypeError):
+        batch_filter = None
 
     query  = "SELECT * FROM exams WHERE grade_data IS NOT NULL"
     params = []
@@ -1441,7 +1452,7 @@ def results():
         params.append(version_filter)
     if batch_filter:
         query += " AND batch=?"
-        params.append(int(batch_filter))
+        params.append(batch_filter)
     query += " ORDER BY version, batch, anon_id"
 
     rows = db.execute(query, params).fetchall()
@@ -1997,7 +2008,8 @@ def dismiss_flag(anon_id):
         return jsonify({"error": "Exam not found"}), 404
 
     gd = json.loads(exam["grade_data"])
-    question = request.json.get("question", "")
+    body = request.get_json(silent=True) or {}
+    question = body.get("question", "")
 
     flags = gd.get("review_flags", [])
     gd["review_flags"] = [f for f in flags if f["question"] != question]
@@ -2039,7 +2051,10 @@ def student_report(anon_id):
 def export_detailed():
     db = get_db()
     version_filter = request.args.get("version", "").upper() or None
-    batch_filter   = request.args.get("batch", "") or None
+    try:
+        batch_filter = int(request.args.get("batch", ""))
+    except (ValueError, TypeError):
+        batch_filter = None
 
     query  = "SELECT * FROM exams WHERE grade_data IS NOT NULL"
     params = []
@@ -2048,7 +2063,7 @@ def export_detailed():
         params.append(version_filter)
     if batch_filter:
         query += " AND batch=?"
-        params.append(int(batch_filter))
+        params.append(batch_filter)
     query += " ORDER BY version, batch, anon_id"
 
     rows = db.execute(query, params).fetchall()
@@ -2127,7 +2142,10 @@ def export_detailed():
 def analytics():
     db = get_db()
     version_filter = request.args.get("version", "").upper() or None
-    batch_filter   = request.args.get("batch", "") or None
+    try:
+        batch_filter = int(request.args.get("batch", ""))
+    except (ValueError, TypeError):
+        batch_filter = None
     q_version      = request.args.get("q_version", "").upper() or None
 
     # Main query — drives distribution, band, and summary stats
@@ -2138,7 +2156,7 @@ def analytics():
         params.append(version_filter)
     if batch_filter:
         query += " AND batch=?"
-        params.append(int(batch_filter))
+        params.append(batch_filter)
 
     rows = db.execute(query, params).fetchall()
 
@@ -2266,6 +2284,183 @@ def launch_ollama():
         return {"ok": True, "message": "Ollama launched — allow a few seconds to load."}
     except Exception as e:
         return {"ok": False, "message": str(e)}, 500
+
+
+# ---------------------------------------------------------------------------
+# Routes: Audit
+# ---------------------------------------------------------------------------
+
+@app.route("/audit")
+def audit_dashboard():
+    db = get_db()
+    graded_count = db.execute("SELECT COUNT(*) FROM exams WHERE grade_data IS NOT NULL").fetchone()[0]
+    total_count  = db.execute("SELECT COUNT(*) FROM exams").fetchone()[0]
+
+    # Current audit job status
+    status = get_audit_status()
+
+    # Available versions for filter dropdown
+    versions = [r["version"] for r in db.execute("SELECT DISTINCT version FROM rubrics").fetchall()]
+
+    # Build run history from audit JSON files — this is the single source of truth
+    # for everything on this page (metrics, cumulative stats, progress bar)
+    run_history = []
+    active_files = []
+    total_audited = 0
+    if AUDIT_DIR.exists():
+        for f in sorted(AUDIT_DIR.glob("audit_*.json"), reverse=True):
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                grade_matches = sum(1 for c in data["comparisons"] if c.get("grade_match"))
+                n = len(data["comparisons"])
+                run_history.append({
+                    "filename": f.name,
+                    "timestamp": data.get("timestamp", ""),
+                    "model": data.get("audit_model", "?"),
+                    "sample_size": n,
+                    "agreement_pct": round(grade_matches / n * 100) if n else 0,
+                })
+                active_files.append(str(f))
+                total_audited += n
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    # Cumulative stats derived from the same file list
+    cum_stats = {"total_audited": total_audited, "runs": len(active_files)}
+
+    # Recommended target
+    target_n = max(30, min(50, int(graded_count * 0.10)))
+    remaining = max(0, target_n - total_audited)
+
+    # Aggregate metrics from the same file list (no separate glob)
+    metrics = None
+    if active_files:
+        comparisons, meta = load_audit_data(specific_files=active_files)
+        if comparisons:
+            metrics = compute_aggregate(comparisons)
+
+    can_audit = graded_count >= 20 and not status["running"] and not _grade_job["running"]
+
+    return render_template("audit.html",
+                           graded_count=graded_count,
+                           total_count=total_count,
+                           cum_stats=cum_stats,
+                           target_n=target_n,
+                           remaining=remaining,
+                           metrics=metrics,
+                           status=status,
+                           versions=versions,
+                           run_history=run_history,
+                           can_audit=can_audit)
+
+
+@app.route("/audit/confirm")
+def audit_confirm():
+    sample_size = request.args.get("sample_size", 10, type=int)
+    sample_size = min(max(sample_size, 1), 30)
+    model_choice = request.args.get("model", "gemini")
+    version = request.args.get("version", "").strip() or None
+
+    if model_choice == "gemini":
+        model_display = "Gemini 3.1 Pro (cross-family)"
+        cost_low = sample_size * 0.05
+        cost_high = sample_size * 0.15
+        # Batches of 5 with 30s cooldown
+        batches = (sample_size + 4) // 5
+        minutes = max(2, batches * 1 + (batches - 1) * 0.5)
+        time_estimate = f"~{minutes:.0f}-{minutes * 2:.0f} minutes"
+    else:
+        model_display = "Claude Opus 4.6 (within-family)"
+        cost_low = sample_size * 0.20
+        cost_high = sample_size * 0.50
+        minutes = sample_size * 1.5
+        time_estimate = f"~{minutes:.0f}-{minutes * 2:.0f} minutes"
+
+    cost_estimate = f"~${cost_low:.2f}-${cost_high:.2f}"
+
+    return render_template("audit_confirm.html",
+                           sample_size=sample_size,
+                           model_choice=model_choice,
+                           model_display=model_display,
+                           version=version,
+                           cost_estimate=cost_estimate,
+                           time_estimate=time_estimate)
+
+
+@app.route("/audit/start", methods=["POST"])
+def audit_start():
+    sample_size = request.form.get("sample_size", 10, type=int)
+    version = request.form.get("version", "").strip() or None
+    model_choice = request.form.get("model", "gemini")
+
+    ok, msg = start_audit(sample_size=sample_size, version=version,
+                          model_choice=model_choice)
+    if not ok:
+        flash(msg, "danger")
+        return redirect(url_for("audit_dashboard"))
+
+    flash(msg, "success")
+    return redirect(url_for("audit_dashboard"))
+
+
+@app.route("/audit/status")
+def audit_status():
+    return jsonify(get_audit_status())
+
+
+@app.route("/audit/abort", methods=["POST"])
+def audit_abort():
+    _audit_abort.set()
+    return jsonify({"ok": True})
+
+
+@app.route("/audit/report", methods=["POST"])
+def audit_report():
+    selected = request.form.getlist("selected")
+    if not selected:
+        flash("No audit runs selected. Check at least one run.", "warning")
+        return redirect(url_for("audit_dashboard"))
+
+    # Resolve to absolute paths and validate filenames
+    specific_files = []
+    for fname in selected:
+        fp = AUDIT_DIR / fname
+        if fp.exists() and fp.name.startswith("audit_") and fp.suffix == ".json":
+            specific_files.append(str(fp))
+    if not specific_files:
+        flash("Selected audit files not found.", "danger")
+        return redirect(url_for("audit_dashboard"))
+
+    comparisons, meta = load_audit_data(specific_files=specific_files)
+    if not comparisons:
+        flash("No comparisons found in selected files.", "warning")
+        return redirect(url_for("audit_dashboard"))
+
+    report_path = DATA_DIR / "audit_report.pdf"
+    build_report(comparisons, str(report_path), meta)
+    return send_file(str(report_path), as_attachment=True,
+                     download_name="rubrica_audit_report.pdf")
+
+
+@app.route("/audit/archive", methods=["POST"])
+def audit_archive():
+    selected = request.form.getlist("selected")
+    if not selected:
+        flash("No audit runs selected.", "warning")
+        return redirect(url_for("audit_dashboard"))
+
+    archive_dir = AUDIT_DIR / "archive"
+    archive_dir.mkdir(exist_ok=True)
+    moved = 0
+    for fname in selected:
+        fp = AUDIT_DIR / fname
+        if fp.exists() and fp.name.startswith("audit_") and fp.suffix == ".json":
+            fp.rename(archive_dir / fp.name)
+            moved += 1
+
+    flash(f"Archived {moved} audit run{'s' if moved != 1 else ''}.", "success")
+    return redirect(url_for("audit_dashboard"))
 
 
 # ---------------------------------------------------------------------------

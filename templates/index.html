@@ -3,81 +3,304 @@
 {% block content %}
 <h2 class="mb-4">Dashboard</h2>
 
-<div class="row g-3 mb-4">
-  <div class="col-md-4">
-    <div class="card text-center border-0 shadow-sm">
-      <div class="card-body py-4">
-        <h1 class="display-4 fw-bold text-primary">{{ total }}</h1>
-        <p class="text-muted mb-0">Exams uploaded</p>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="card text-center border-0 shadow-sm">
-      <div class="card-body py-4">
-        <h1 class="display-4 fw-bold text-success">{{ graded }}</h1>
-        <p class="text-muted mb-0">Graded</p>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="card text-center border-0 shadow-sm">
-      <div class="card-body py-4">
-        <h1 class="display-4 fw-bold text-warning">{{ ungraded }}</h1>
-        <p class="text-muted mb-0">Awaiting grading</p>
-      </div>
-    </div>
-  </div>
-</div>
+{% set step1_done = versions_with_rubrics | length > 0 %}
+{% set step2_done = total > 0 %}
+{% set step3_done = total > 0 and not active_review_id %}
+{% set step4_done = graded > 0 and ungraded == 0 %}
+{% set step5_done = audit_stats.total_audited > 0 %}
+{% set step6_done = graded > 0 %}
 
-<div class="card border-0 shadow-sm mb-4">
+<div class="row g-4">
+
+{# ===== LEFT COLUMN: Workflow ===== #}
+<div class="col-lg-8">
+<div class="card border-0 shadow-sm">
   <div class="card-body">
-    <h5 class="card-title">🔒 Privacy Guarantee</h5>
-    <p class="mb-0">Student names are stored <strong>only on this machine</strong>. Claude receives anonymous IDs, exam text, and rubric only — never student identities.</p>
-  </div>
-</div>
+    <h5 class="card-title mb-3">Workflow</h5>
 
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
-    <div>
-      <h5 class="card-title mb-1">🔴 Private Mode
-        {% if private_mode %}<span class="badge bg-danger ms-2">ON</span>{% else %}<span class="badge bg-secondary ms-2">OFF</span>{% endif %}
-      </h5>
-      <p class="text-muted small mb-0">Hides all student names, SIDs, and blurs cover pages — for use during presentations.</p>
+    {# --- Step 1: Set up rubric --- #}
+    {% set done = step1_done %}
+    <div class="d-flex align-items-start gap-3">
+      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+           style="width:2rem;height:2rem;font-size:.85rem;{% if done %}background:var(--bs-success-bg-subtle);color:var(--bs-success-text-emphasis){% else %}background:var(--bs-tertiary-bg);color:var(--bs-secondary-color){% endif %}">
+        {% if done %}&#10003;{% else %}1{% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <strong>Set up rubric</strong>
+          {% if done %}<span class="badge bg-success-subtle text-success-emphasis">Done</span>{% endif %}
+        </div>
+        <p class="text-body-secondary small mb-1">Upload a rubric for each exam version.</p>
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#step1Detail" role="button">See more</a>
+        <div class="collapse" id="step1Detail">
+          <p class="text-body-secondary small mt-1 mb-0">The rubric defines questions, point values, expected answers, and partial credit rules. Supports PDF and text. Update anytime and re-grade afterward.</p>
+        </div>
+      </div>
+      <a href="/setup" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center">Set up</a>
     </div>
-    <form method="POST" action="/toggle-private-mode">
-      <input type="hidden" name="next" value="{{ request.url }}">
-      {% if private_mode %}
-        <button type="submit" class="btn btn-danger">Disable Private Mode</button>
+
+    <hr class="my-3">
+
+    {# --- Step 2: Upload exams --- #}
+    {% set done = step2_done %}
+    <div class="d-flex align-items-start gap-3">
+      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+           style="width:2rem;height:2rem;font-size:.85rem;{% if done %}background:var(--bs-success-bg-subtle);color:var(--bs-success-text-emphasis){% else %}background:var(--bs-tertiary-bg);color:var(--bs-secondary-color){% endif %}">
+        {% if done %}&#10003;{% else %}2{% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <strong>Upload exams</strong>
+          {% if done %}<span class="badge bg-success-subtle text-success-emphasis">Done</span>{% endif %}
+        </div>
+        <p class="text-body-secondary small mb-1">Batch upload scanned exam PDFs.</p>
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#step2Detail" role="button">See more</a>
+        <div class="collapse" id="step2Detail">
+          <p class="text-body-secondary small mt-1 mb-0">Upload a multi-page PDF and specify pages per exam. The app splits it into individual files, each assigned an anonymous ID. Cover pages are read by on-device Ollama (llama3.2-vision) to extract student names &mdash; nothing leaves your machine.</p>
+        </div>
+      </div>
+      <a href="/upload-batch" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center">Upload</a>
+    </div>
+
+    <hr class="my-3">
+
+    {# --- Step 3: Review scans --- #}
+    {% set done = step3_done %}
+    <div class="d-flex align-items-start gap-3">
+      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+           style="width:2rem;height:2rem;font-size:.85rem;{% if done %}background:var(--bs-success-bg-subtle);color:var(--bs-success-text-emphasis){% else %}background:var(--bs-tertiary-bg);color:var(--bs-secondary-color){% endif %}">
+        {% if done %}&#10003;{% else %}3{% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <strong>Review scans</strong>
+          {% if done %}<span class="badge bg-success-subtle text-success-emphasis">Done</span>{% endif %}
+          {% if active_review_id %}<span class="badge bg-warning-subtle text-warning-emphasis">In progress</span>{% endif %}
+        </div>
+        <p class="text-body-secondary small mb-1">Confirm student identities from cover page OCR.</p>
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#step3Detail" role="button">See more</a>
+        <div class="collapse" id="step3Detail">
+          <p class="text-body-secondary small mt-1 mb-0">Local OCR reads cover pages to extract names. Review and correct matches against your roster. Names never leave this machine.{% if roster_count %} Roster loaded: {{ roster_count }} students.{% endif %}</p>
+        </div>
+      </div>
+      {% if active_review_id %}
+        <a href="/upload-batch/review/{{ active_review_id }}" class="btn btn-sm btn-outline-warning flex-shrink-0 align-self-center">Review</a>
       {% else %}
-        <button type="submit" class="btn btn-outline-danger">Enable Private Mode</button>
+        <a href="/upload-batch" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center">Upload</a>
       {% endif %}
-    </form>
+    </div>
+
+    <hr class="my-3">
+
+    {# --- Step 4: Grade --- #}
+    {% set done = step4_done %}
+    <div class="d-flex align-items-start gap-3">
+      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+           style="width:2rem;height:2rem;font-size:.85rem;{% if done %}background:var(--bs-success-bg-subtle);color:var(--bs-success-text-emphasis){% else %}background:var(--bs-tertiary-bg);color:var(--bs-secondary-color){% endif %}">
+        {% if done %}&#10003;{% else %}4{% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <strong>Grade</strong>
+          {% if done %}<span class="badge bg-success-subtle text-success-emphasis">Done</span>{% endif %}
+          {% if graded > 0 and ungraded > 0 %}<span class="badge bg-info-subtle text-info-emphasis">{{ graded }} / {{ total }}</span>{% endif %}
+        </div>
+        <p class="text-body-secondary small mb-1">Claude grades each exam against the rubric.</p>
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#step4Detail" role="button">See more</a>
+        <div class="collapse" id="step4Detail">
+          <p class="text-body-secondary small mt-1 mb-0">Runs 5 parallel workers with built-in safeguards:</p>
+          <ul class="text-body-secondary small mb-0">
+            <li>Borderline re-grade &mdash; scores within 1.5% of a letter grade cutoff are automatically graded twice and averaged</li>
+            <li>Feedback specificity &mdash; vague feedback ("Good work", "Incorrect") is detected and re-prompted for rubric-anchored detail</li>
+            <li>Deterministic output &mdash; temperature 0 for consistent scoring</li>
+            <li>2x contrast enhancement on exam images for faint pencil</li>
+            <li>JSON retry (up to 2 attempts) catches malformed API responses</li>
+            <li>Anonymous IDs only &mdash; Claude receives the anon ID, answer pages, and rubric; cover pages and student names never leave this machine</li>
+          </ul>
+        </div>
+      </div>
+      <a href="/exams" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center">Grade</a>
+    </div>
+
+    <hr class="my-3">
+
+    {# --- Step 5: Audit (optional) --- #}
+    {% set done = step5_done %}
+    <div class="d-flex align-items-start gap-3">
+      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+           style="width:2rem;height:2rem;font-size:.85rem;{% if done %}background:var(--bs-success-bg-subtle);color:var(--bs-success-text-emphasis){% else %}background:var(--bs-tertiary-bg);color:var(--bs-secondary-color){% endif %}">
+        {% if done %}&#10003;{% else %}5{% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <strong>Audit</strong>
+          <span class="text-body-secondary small">(optional)</span>
+          {% if done %}<span class="badge bg-success-subtle text-success-emphasis">{{ audit_stats.total_audited }} audited</span>{% endif %}
+        </div>
+        <p class="text-body-secondary small mb-1">Validate grading accuracy with an independent model.</p>
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#step5Detail" role="button">See more</a>
+        <div class="collapse" id="step5Detail">
+          <p class="text-body-secondary small mt-1 mb-0">Re-grades a random sample using an independent model (Gemini cross-family or Opus within-family), then compares against production scores. Produces inter-rater reliability metrics:</p>
+          <ul class="text-body-secondary small mb-0">
+            <li>Balanced stratified sampling &mdash; equal exams drawn from each version for fair coverage</li>
+            <li>Letter grade agreement, exact score match, within-1-point rates, and mean absolute error</li>
+            <li>QWK and ICC metrics when sample reaches 30+ exams</li>
+            <li>Downloadable PDF validation report for faculty review</li>
+            <li>Same privacy pipeline &mdash; anonymous IDs only, no student names sent to any API</li>
+          </ul>
+        </div>
+      </div>
+      <a href="/audit" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center" style="color:#7c3aed;border-color:#7c3aed;">Audit</a>
+    </div>
+
+    <hr class="my-3">
+
+    {# --- Step 6: Review & distribute --- #}
+    {% set done = step6_done %}
+    <div class="d-flex align-items-start gap-3">
+      <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+           style="width:2rem;height:2rem;font-size:.85rem;{% if done %}background:var(--bs-success-bg-subtle);color:var(--bs-success-text-emphasis){% else %}background:var(--bs-tertiary-bg);color:var(--bs-secondary-color){% endif %}">
+        {% if done %}&#10003;{% else %}6{% endif %}
+      </div>
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <strong>Review & distribute</strong>
+          {% if done %}<span class="badge bg-success-subtle text-success-emphasis">Done</span>{% endif %}
+        </div>
+        <p class="text-body-secondary small mb-1">View results, handle flags, print reports, export CSV.</p>
+        <a class="small text-decoration-none" data-bs-toggle="collapse" href="#step6Detail" role="button">See more</a>
+        <div class="collapse" id="step6Detail">
+          <p class="text-body-secondary small mt-1 mb-0">Results table with scores, letter grades, and review flags. Print individual student reports with optional exam scans. Export grades as CSV.</p>
+        </div>
+      </div>
+      <a href="/results" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center">Results</a>
+    </div>
+
   </div>
 </div>
 
-<h5 class="mb-3">Quick Start</h5>
-<div class="row g-2">
-  <div class="col-md-3">
-    <a href="/setup" class="btn btn-outline-primary w-100">
-      1️⃣ Set up rubric
-      {% if versions_with_rubrics %}
-        <span class="badge bg-success ms-1">✓</span>
-      {% endif %}
-    </a>
-  </div>
-  <div class="col-md-3">
-    <a href="/upload-batch" class="btn btn-outline-primary w-100">2️⃣ Upload exams</a>
-  </div>
-  <div class="col-md-3">
-    <a href="/exams" class="btn btn-outline-primary w-100">3️⃣ Grade exams</a>
-  </div>
-  <div class="col-md-3">
-    <a href="/results" class="btn btn-outline-primary w-100">4️⃣ View results</a>
-  </div>
+{# Smart next-step CTA #}
+<div class="d-flex justify-content-end mt-3">
+  {% if not step1_done %}
+    <a href="/setup" class="btn btn-primary">Next: Set up rubric &rarr;</a>
+  {% elif not step2_done %}
+    <a href="/upload-batch" class="btn btn-primary">Next: Upload exams &rarr;</a>
+  {% elif not step3_done %}
+    {% if active_review_id %}
+      <a href="/upload-batch/review/{{ active_review_id }}" class="btn btn-primary">Next: Review scans &rarr;</a>
+    {% else %}
+      <a href="/upload-batch" class="btn btn-primary">Next: Upload exams &rarr;</a>
+    {% endif %}
+  {% elif not step4_done %}
+    <a href="/exams" class="btn btn-primary">Next: Grade exams &rarr;</a>
+  {% elif not step6_done %}
+    <a href="/results" class="btn btn-primary">Next: View results &rarr;</a>
+  {% else %}
+    <a href="/results" class="btn btn-success">All done &mdash; view results &rarr;</a>
+  {% endif %}
 </div>
+</div>{# /col-lg-8 #}
 
-<div class="d-flex justify-content-end mt-4">
-  <a href="/setup" class="btn btn-primary">Next: Set up Rubric →</a>
-</div>
+{# ===== RIGHT COLUMN: Stats sidebar ===== #}
+<div class="col-lg-4">
+
+  {# --- Privacy & Private Mode --- #}
+  <div class="card border-0 shadow-sm mb-3 bg-body-tertiary">
+    <div class="card-body py-3">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <span class="badge bg-success" style="font-size:.65rem">Local Only</span>
+        <span class="text-body-secondary small">Names never leave this machine</span>
+      </div>
+      <hr class="my-2">
+      <div class="d-flex align-items-center justify-content-between">
+        <div>
+          <span class="small fw-semibold">Private Mode</span>
+          {% if private_mode %}<span class="badge bg-danger ms-1" style="font-size:.6rem">ON</span>{% else %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">OFF</span>{% endif %}
+        </div>
+        <form method="POST" action="/toggle-private-mode" class="mb-0">
+          <input type="hidden" name="next" value="{{ request.url }}">
+          {% if private_mode %}
+            <button type="submit" class="btn btn-danger btn-sm" style="font-size:.75rem;padding:2px 8px">Disable</button>
+          {% else %}
+            <button type="submit" class="btn btn-outline-danger btn-sm" style="font-size:.75rem;padding:2px 8px">Enable</button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# --- Grading stats --- #}
+  <div class="card border-0 shadow-sm mb-3 bg-body-tertiary">
+    <div class="card-body py-3">
+      <h6 class="text-body-secondary small text-uppercase fw-semibold mb-3" style="letter-spacing:.05em">Grading</h6>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Uploaded</span>
+        <span class="fw-semibold">{{ total }}</span>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Graded</span>
+        <span class="fw-semibold text-success">{{ graded }}</span>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Awaiting</span>
+        <span class="fw-semibold {% if ungraded > 0 %}text-warning{% endif %}">{{ ungraded }}</span>
+      </div>
+      {% if total > 0 %}
+      <div class="progress mt-2" style="height:6px">
+        <div class="progress-bar bg-success" style="width:{{ (graded / total * 100) if total > 0 else 0 }}%"></div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# --- Overview stats --- #}
+  <div class="card border-0 shadow-sm mb-3 bg-body-tertiary">
+    <div class="card-body py-3">
+      <h6 class="text-body-secondary small text-uppercase fw-semibold mb-3" style="letter-spacing:.05em">Overview</h6>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Versions</span>
+        <span class="fw-semibold">{{ versions_with_rubrics | length }}</span>
+      </div>
+      {% if roster_count %}
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Roster</span>
+        <span class="fw-semibold">{{ roster_count }} students</span>
+      </div>
+      {% endif %}
+      {% if graded > 0 %}
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Est. time saved</span>
+        <span class="fw-semibold text-success">~{{ "%.1f"|format(graded * 13 / 60) }} hrs</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# --- Audit stats (if data exists) --- #}
+  {% if audit_stats.total_audited > 0 %}
+  <div class="card border-0 shadow-sm mb-3 bg-body-tertiary" style="border-left:3px solid #7c3aed !important;">
+    <div class="card-body py-3">
+      <h6 class="small text-uppercase fw-semibold mb-3" style="letter-spacing:.05em;color:#7c3aed">Audit</h6>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Audited</span>
+        <span class="fw-semibold">{{ audit_stats.total_audited }}</span>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-body-secondary small">Runs</span>
+        <span class="fw-semibold">{{ audit_stats.runs }}</span>
+      </div>
+      {% if audit_stats.total_audited >= 30 %}
+        <span class="badge bg-success-subtle text-success-emphasis small">Target reached (n >= 30)</span>
+      {% else %}
+        <div class="progress mt-1" style="height:6px">
+          <div class="progress-bar" style="width:{{ (audit_stats.total_audited / 30 * 100) | int }}%;background:#7c3aed"></div>
+        </div>
+        <span class="text-body-secondary small">{{ 30 - audit_stats.total_audited }} more for QWK/ICC</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>{# /col-lg-4 #}
+</div>{# /row #}
 {% endblock %}

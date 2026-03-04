@@ -220,4 +220,6 @@ The following production features were implemented based on findings from AES an
 
 ## License
 
-MIT
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+
+You are free to use, modify, and distribute Rubrica for any purpose, including academic and personal use. If you deploy a modified version as a network service, the AGPL requires you to make your source code available. For commercial licensing inquiries, contact Travis Fraser.
