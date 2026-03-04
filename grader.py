@@ -1483,13 +1483,47 @@ def results():
         "SELECT DISTINCT batch FROM exams WHERE grade_data IS NOT NULL ORDER BY batch"
     ).fetchall()
 
+    # Compute audit health for suggestions
+    audit_health = None
+    try:
+        comparisons, meta = load_audit_data()
+        if comparisons:
+            agg = compute_aggregate(comparisons)
+            failures = []
+            if agg["exact_match_pct"] < 70:
+                failures.append(f"Exact Score Match {agg['exact_match_pct']:.0f}% (threshold: 70%)")
+            if agg["within_1_pct"] < 95:
+                failures.append(f"Within-1-Point {agg['within_1_pct']:.0f}% (threshold: 95%)")
+            if agg["mae"] >= 1.0:
+                failures.append(f"MAE {agg['mae']:.2f} pts (threshold: <1.0)")
+            if agg["grade_agreement_pct"] < 80:
+                failures.append(f"Grade Agreement {agg['grade_agreement_pct']:.0f}% (threshold: 80%)")
+            # Find questions with largest average deviation, keyed by (version, question)
+            from collections import defaultdict
+            q_diffs = defaultdict(list)
+            for c in comparisons:
+                ver = c.get("version", "?")
+                for q in c["per_question"]:
+                    if not q["question"].upper().startswith("TOTA"):
+                        q_diffs[(ver, q["question"])].append(q["abs_diff"])
+            worst_qs = []
+            if q_diffs:
+                ranked = sorted(q_diffs, key=lambda k: sum(q_diffs[k]) / len(q_diffs[k]), reverse=True)
+                for ver, qname in ranked[:3]:
+                    avg = sum(q_diffs[(ver, qname)]) / len(q_diffs[(ver, qname)])
+                    worst_qs.append(f"{ver} {qname} (avg {avg:.1f} pt)")
+            audit_health = {"failures": failures, "worst_questions": worst_qs}
+    except Exception:
+        pass
+
     return render_template("results.html",
                            graded=graded,
                            show_names=show,
                            versions=[r["version"] for r in versions],
                            batches=[r["batch"] for r in batches],
                            version_filter=version_filter,
-                           batch_filter=batch_filter)
+                           batch_filter=batch_filter,
+                           audit_health=audit_health)
 
 
 @app.route("/exam/<anon_id>/toggle-reviewed", methods=["POST"])

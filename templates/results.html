@@ -120,12 +120,12 @@
         <button class="btn btn-sm btn-outline-secondary"
                 data-bs-toggle="collapse"
                 data-bs-target="#detail-{{ r.anon_id }}">
-          Details
+          Review
         </button>
-        <a href="/exam/{{ r.anon_id }}/report" target="_blank"
-           class="btn btn-sm btn-outline-primary">Report</a>
         <a href="/exam/{{ r.anon_id }}?from=results" onclick="window.open(this.href,'scan_{{ r.anon_id }}','width=1320,height=1350,scrollbars=yes,resizable=yes');return false;"
            class="btn btn-sm btn-outline-secondary">Scan</a>
+        <a href="/exam/{{ r.anon_id }}/report" target="_blank"
+           class="btn btn-sm btn-outline-primary">Report</a>
         <button class="btn btn-sm {{ 'btn-success' if r.reviewed else 'btn-outline-success' }}"
                 id="rev-btn-{{ r.anon_id }}"
                 onclick="toggleReviewed('{{ r.anon_id }}')"
@@ -140,13 +140,8 @@
           <p>{{ r.overall_feedback }}</p>
 
           {% if r.scores %}
-          <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="mb-2">
             <h6 class="text-muted mb-0">Question Breakdown</h6>
-            <button type="button" id="save-btn-{{ r.anon_id }}"
-                    class="btn btn-sm btn-success"
-                    onclick="saveAdjustments('{{ r.anon_id }}')">
-              💾 Save Adjustments
-            </button>
           </div>
           <table class="table table-sm table-bordered mb-0">
             <thead class="table-secondary">
@@ -199,6 +194,23 @@
               {% endfor %}
             </tbody>
           </table>
+          <div class="d-flex justify-content-end gap-2 mt-3">
+            <button type="button" id="save-btn-{{ r.anon_id }}"
+                    class="btn btn-sm btn-success"
+                    onclick="saveAndCollapse('{{ r.anon_id }}')">
+              Save Changes
+            </button>
+            <button type="button"
+                    class="btn btn-sm btn-outline-success"
+                    onclick="reviewedAndCollapse('{{ r.anon_id }}')">
+              Reviewed
+            </button>
+            <button type="button"
+                    class="btn btn-sm btn-outline-danger"
+                    onclick="collapseDetail('{{ r.anon_id }}')">
+              Cancel
+            </button>
+          </div>
           {% endif %}
         </div>
       </td>
@@ -301,12 +313,75 @@ window.toggleAllDetails = function(expand) {
         gradeEl.className   = 'badge fs-6 ' + gradeClass(d.letter_grade);
         btn.disabled    = false;
         btn.textContent = '✓ Saved';
-        setTimeout(function () { btn.textContent = '💾 Save Adjustments'; }, 2000);
+        setTimeout(function () { btn.textContent = 'Save Changes'; }, 2000);
       })
       .catch(function () {
         btn.disabled    = false;
         btn.textContent = 'Error — retry';
       });
+  };
+
+  window.collapseDetail = function (anonId) {
+    var el = document.getElementById('detail-' + anonId);
+    if (el) bootstrap.Collapse.getOrCreateInstance(el, { toggle: false }).hide();
+  };
+
+  window.markReviewed = function (anonId) {
+    var btn = document.getElementById('rev-btn-' + anonId);
+    var row = document.getElementById('row-' + anonId);
+    // Only mark if not already reviewed
+    if (btn && btn.classList.contains('btn-outline-success')) {
+      return fetch('/exam/' + anonId + '/toggle-reviewed', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.reviewed) {
+            btn.className = 'btn btn-sm btn-success';
+            btn.title = 'Reviewed';
+            if (row) {
+              row.style.borderLeft = '4px solid #198754';
+              row.style.backgroundColor = 'rgba(25,135,84,0.06)';
+            }
+          }
+        });
+    }
+    return Promise.resolve();
+  };
+
+  window.saveAndCollapse = function (anonId) {
+    var btn = document.getElementById('save-btn-' + anonId);
+    var data = new FormData();
+    document.querySelectorAll('.earned-input[data-anon-id="' + anonId + '"]').forEach(function (inp) {
+      data.append(inp.name, inp.value);
+    });
+    document.querySelectorAll('.feedback-input[data-anon-id="' + anonId + '"]').forEach(function (inp) {
+      data.append(inp.name, inp.value);
+    });
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch('/exam/' + anonId + '/report/update', { method: 'POST', body: data })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        document.getElementById('score-' + anonId).textContent = d.total_earned + ' / ' + d.total_possible;
+        var pctCap = Math.min(d.pct, 100);
+        var pctEl  = document.getElementById('pct-' + anonId);
+        pctEl.textContent = pctCap.toFixed(1) + '%';
+        pctEl.className   = 'fw-semibold ' + pctClass(pctCap);
+        var gradeEl = document.getElementById('grade-' + anonId);
+        gradeEl.textContent = d.letter_grade;
+        gradeEl.className   = 'badge fs-6 ' + gradeClass(d.letter_grade);
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+        return markReviewed(anonId);
+      })
+      .then(function () { collapseDetail(anonId); })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Error — retry';
+      });
+  };
+
+  window.reviewedAndCollapse = function (anonId) {
+    markReviewed(anonId).then(function () { collapseDetail(anonId); });
   };
 
   window.dismissFlag = function (btn) {
@@ -361,13 +436,19 @@ window.toggleAllDetails = function(expand) {
 </script>
 
 {% if graded|length >= 20 %}
-<div class="card mb-4 mt-4" style="border-left:4px solid #7c3aed;">
+<div class="card mb-4 mt-4" style="border-left:4px solid {% if audit_health and audit_health.failures %}#dc2626{% else %}#7c3aed{% endif %};">
   <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
     <div>
+      {% if audit_health and audit_health.failures %}
+      <h6 class="mb-1 text-danger">Audit Metrics Below Threshold</h6>
+      <p class="text-body-secondary small mb-1">{{ audit_health.failures|join('; ') }}</p>
+      <p class="small mb-0"><strong>Suggestion:</strong> Review the audit report for the largest score deviations and consider adjusting the rubric.{% if audit_health.worst_questions %} Worst: {{ audit_health.worst_questions|join(', ') }}.{% endif %}</p>
+      {% else %}
       <h6 class="mb-1" style="color:#7c3aed;">Grading Audit Available</h6>
       <p class="text-body-secondary small mb-0">Validate scores with an independent cross-family model. {{ graded|length }} exams graded.</p>
+      {% endif %}
     </div>
-    <a href="/audit" class="btn btn-sm" style="background:#7c3aed;border-color:#7c3aed;color:#fff;">Go to Audit</a>
+    <a href="/audit" class="btn btn-sm" style="background:{% if audit_health and audit_health.failures %}#dc2626;border-color:#dc2626{% else %}#7c3aed;border-color:#7c3aed{% endif %};color:#fff;">{% if audit_health and audit_health.failures %}Review Audit{% else %}Go to Audit{% endif %}</a>
   </div>
 </div>
 {% endif %}
