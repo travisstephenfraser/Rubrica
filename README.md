@@ -139,11 +139,6 @@ Open `http://localhost:5000` in your browser.
 Rubrica/
 ├── grader.py                # Flask app — all routes and business logic
 ├── scoring.py               # Shared scoring pipeline (consolidation, sanitization, finalization)
-├── audit_grader.py          # Independent re-grading audit (Gemini 3.1 Pro / Opus 4.6)
-├── generate_audit_report.py # PDF validation report from audit results
-├── generate_testing_report.py # Testing analysis report generator
-├── generate_presentation_bundle.py # Combined PDF bundle (title + TOC + all reports)
-├── generate_review_checklist.py    # Review workflow PDF with flagged exams
 ├── requirements.txt         # Python dependencies
 ├── build_info.json          # Auto-generated build metadata (commit, branch, date)
 ├── data/                    # Local only — excluded from version control
@@ -153,6 +148,8 @@ Rubrica/
 │   └── audit_results/       # Audit JSON + validation report PDFs
 └── templates/               # HTML templates (Bootstrap 5)
 ```
+
+> **Audit pipeline (work in progress):** The independent re-grading system, PDF report generation, structural pattern analysis, and insights dashboard are under active development and not yet included in the open-source distribution. The validation results below reflect testing on a single course and exam; broader cross-subject validation is needed before the audit tooling is ready for general use. These modules will be open-sourced once the methodology is sufficiently tested across different subjects, rubric formats, and class sizes.
 
 ---
 
