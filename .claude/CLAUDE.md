@@ -16,6 +16,11 @@ Two pillars govern all changes: **privacy** (student PII never leaves the machin
 - QWK and ICC metrics **must appear** in both the audit report and the bundle whenever n >= 30. If they're missing, the data loading is wrong.
 - **No hardcoded adjusted agreement figures** (e.g. "97% adj. for auditor error"). Those require manual validation of specific mismatches and must not auto-print on future reports.
 
+## Git & Deployment
+
+- **Always ask before pushing to remote.** Never `git push` without explicit approval, even after committing.
+- **Proprietary files are gitignored**, not tracked. The audit/insights pipeline, rubric-builder, and testing agent stay local. `grader.py` has import guards so the app runs without them. See `.gitignore` for the full list.
+
 ## Server
 
 - **Never start, stop, or restart the Flask server.** Travis manages the server process manually. If a change requires a restart, say so and wait.

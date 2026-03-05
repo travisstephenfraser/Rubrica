@@ -448,7 +448,7 @@ window.toggleAllDetails = function(expand) {
       <p class="text-body-secondary small mb-0">Validate scores with an independent cross-family model. {{ graded|length }} exams graded.</p>
       {% endif %}
     </div>
-    <a href="/audit" class="btn btn-sm" style="background:{% if audit_health and audit_health.failures %}#dc2626;border-color:#dc2626{% else %}#7c3aed;border-color:#7c3aed{% endif %};color:#fff;">{% if audit_health and audit_health.failures %}Review Audit{% else %}Go to Audit{% endif %}</a>
+    <a href="/quality" class="btn btn-sm" style="background:{% if audit_health and audit_health.failures %}#dc2626;border-color:#dc2626{% else %}#7c3aed;border-color:#7c3aed{% endif %};color:#fff;">{% if audit_health and audit_health.failures %}Review Audit{% else %}Go to Quality{% endif %}</a>
   </div>
 </div>
 {% endif %}

@@ -40,9 +40,14 @@ from flask import (Flask, flash, g, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
 from scoring import (letter_grade, clean_feedback,
                      consolidate_and_clean, finalize_scores)
-from audit_grader import (start_audit, get_audit_status, get_cumulative_audit_stats,
-                          AUDIT_DIR, _audit_abort)
-from generate_audit_report import load_audit_data, compute_aggregate, build_report
+try:
+    from audit_grader import (start_audit, get_audit_status, get_cumulative_audit_stats,
+                              AUDIT_DIR, _audit_abort)
+    from generate_audit_report import load_audit_data, compute_aggregate, build_report
+    _HAS_AUDIT = True
+except ImportError:
+    _HAS_AUDIT = False
+    AUDIT_DIR = Path(__file__).parent / "data" / "audit_results"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -574,7 +579,7 @@ def index():
     rubrics = db.execute("SELECT DISTINCT version FROM rubrics").fetchall()
     versions_with_rubrics = [r["version"] for r in rubrics]
     roster_count = db.execute("SELECT COUNT(*) FROM roster").fetchone()[0]
-    audit_stats = get_cumulative_audit_stats()
+    audit_stats = get_cumulative_audit_stats() if _HAS_AUDIT else {"total_audited": 0, "runs": 0}
     return render_template("index.html",
                            total=total,
                            graded=graded,
@@ -2325,7 +2330,33 @@ def launch_ollama():
 # ---------------------------------------------------------------------------
 
 @app.route("/audit")
-def audit_dashboard():
+def audit_redirect():
+    """Redirect legacy /audit bookmarks to /quality."""
+    return redirect(url_for("quality_dashboard"), code=301)
+
+
+@app.route("/quality")
+def quality_dashboard():
+    section = request.args.get("section", "audit")
+
+    # Insights section — load insights.json and render
+    if section == "insights":
+        insights_path = AUDIT_DIR / "insights.json"
+        insights_data = None
+        if insights_path.exists():
+            try:
+                with open(insights_path) as f:
+                    insights_data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return render_template("quality.html", section="insights",
+                               insights=insights_data)
+
+    # Audit section (default) — requires proprietary audit modules
+    if not _HAS_AUDIT:
+        flash("Audit module not available.", "warning")
+        return redirect(url_for("index"))
+
     db = get_db()
     graded_count = db.execute("SELECT COUNT(*) FROM exams WHERE grade_data IS NOT NULL").fetchone()[0]
     total_count  = db.execute("SELECT COUNT(*) FROM exams").fetchone()[0]
@@ -2376,7 +2407,8 @@ def audit_dashboard():
 
     can_audit = graded_count >= 20 and not status["running"] and not _grade_job["running"]
 
-    return render_template("audit.html",
+    return render_template("quality.html",
+                           section="audit",
                            graded_count=graded_count,
                            total_count=total_count,
                            cum_stats=cum_stats,
@@ -2389,8 +2421,17 @@ def audit_dashboard():
                            can_audit=can_audit)
 
 
+def _require_audit():
+    """Return an error response if audit modules are unavailable, else None."""
+    if not _HAS_AUDIT:
+        return jsonify({"error": "Audit module not available"}), 404
+    return None
+
+
 @app.route("/audit/confirm")
 def audit_confirm():
+    err = _require_audit()
+    if err: return err
     sample_size = request.args.get("sample_size", 10, type=int)
     sample_size = min(max(sample_size, 1), 30)
     model_choice = request.args.get("model", "gemini")
@@ -2424,6 +2465,8 @@ def audit_confirm():
 
 @app.route("/audit/start", methods=["POST"])
 def audit_start():
+    err = _require_audit()
+    if err: return err
     sample_size = request.form.get("sample_size", 10, type=int)
     version = request.form.get("version", "").strip() or None
     model_choice = request.form.get("model", "gemini")
@@ -2432,29 +2475,35 @@ def audit_start():
                           model_choice=model_choice)
     if not ok:
         flash(msg, "danger")
-        return redirect(url_for("audit_dashboard"))
+        return redirect(url_for("quality_dashboard"))
 
     flash(msg, "success")
-    return redirect(url_for("audit_dashboard"))
+    return redirect(url_for("quality_dashboard"))
 
 
 @app.route("/audit/status")
 def audit_status():
+    err = _require_audit()
+    if err: return err
     return jsonify(get_audit_status())
 
 
 @app.route("/audit/abort", methods=["POST"])
 def audit_abort():
+    err = _require_audit()
+    if err: return err
     _audit_abort.set()
     return jsonify({"ok": True})
 
 
 @app.route("/audit/report", methods=["POST"])
 def audit_report():
+    err = _require_audit()
+    if err: return err
     selected = request.form.getlist("selected")
     if not selected:
         flash("No audit runs selected. Check at least one run.", "warning")
-        return redirect(url_for("audit_dashboard"))
+        return redirect(url_for("quality_dashboard"))
 
     # Resolve to absolute paths and validate filenames
     specific_files = []
@@ -2464,12 +2513,12 @@ def audit_report():
             specific_files.append(str(fp))
     if not specific_files:
         flash("Selected audit files not found.", "danger")
-        return redirect(url_for("audit_dashboard"))
+        return redirect(url_for("quality_dashboard"))
 
     comparisons, meta = load_audit_data(specific_files=specific_files)
     if not comparisons:
         flash("No comparisons found in selected files.", "warning")
-        return redirect(url_for("audit_dashboard"))
+        return redirect(url_for("quality_dashboard"))
 
     report_path = DATA_DIR / "audit_report.pdf"
     build_report(comparisons, str(report_path), meta)
@@ -2479,10 +2528,12 @@ def audit_report():
 
 @app.route("/audit/archive", methods=["POST"])
 def audit_archive():
+    err = _require_audit()
+    if err: return err
     selected = request.form.getlist("selected")
     if not selected:
         flash("No audit runs selected.", "warning")
-        return redirect(url_for("audit_dashboard"))
+        return redirect(url_for("quality_dashboard"))
 
     archive_dir = AUDIT_DIR / "archive"
     archive_dir.mkdir(exist_ok=True)
@@ -2494,7 +2545,49 @@ def audit_archive():
             moved += 1
 
     flash(f"Archived {moved} audit run{'s' if moved != 1 else ''}.", "success")
-    return redirect(url_for("audit_dashboard"))
+    return redirect(url_for("quality_dashboard"))
+
+
+@app.route("/quality/insights/refresh", methods=["POST"])
+def insights_refresh():
+    """Regenerate insights.json from all audit runs."""
+    from insights import (load_all_audit_runs, deduplicate_comparisons,
+                          compute_aggregate as insights_aggregate,
+                          compute_per_question_cumulative, compute_trends,
+                          build_run_history, load_rubric_metadata,
+                          extract_structural_patterns, extract_feedback_patterns,
+                          detect_bias_patterns, generate_lessons,
+                          build_insights_json, save_insights)
+    since = request.form.get("since", "").strip() or None
+    try:
+        runs = load_all_audit_runs(since=since)
+        if not runs:
+            flash("No audit runs found." + (f" (since {since})" if since else " Run an audit first."), "warning")
+            return redirect(url_for("quality_dashboard", section="insights"))
+
+        comparisons = deduplicate_comparisons(runs)
+        cumulative = insights_aggregate(comparisons)
+        per_question = compute_per_question_cumulative(comparisons)
+        trends = compute_trends(runs)
+        run_history = build_run_history(runs)
+        rubric_meta = load_rubric_metadata()
+        structural = extract_structural_patterns(per_question, rubric_meta)
+        feedback = extract_feedback_patterns(comparisons)
+        biases = detect_bias_patterns(comparisons)
+        lessons = generate_lessons(structural, feedback, biases)
+
+        data = build_insights_json(runs, comparisons, cumulative, per_question,
+                                   trends, structural, feedback, biases,
+                                   lessons, run_history)
+        if since:
+            data["since_filter"] = since
+        save_insights(data)
+        flash("Insights refreshed." + (f" (runs since {since})" if since else ""), "success")
+    except Exception as e:
+        logger.exception("Insights refresh failed")
+        flash(f"Insights refresh failed: {e}", "danger")
+
+    return redirect(url_for("quality_dashboard", section="insights"))
 
 
 # ---------------------------------------------------------------------------

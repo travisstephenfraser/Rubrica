@@ -26,3 +26,15 @@ generate_rubric*.py
 
 # Local feed (screenshots, messages)
 Feed/
+
+# Proprietary — quality/audit/insights pipeline (not open-sourced)
+audit_grader.py
+insights.py
+generate_audit_report.py
+generate_testing_report.py
+generate_presentation_bundle.py
+generate_review_checklist.py
+generate_grading_overview.py
+templates/quality.html
+templates/audit_confirm.html
+.claude/agents/testing
