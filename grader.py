@@ -49,6 +49,19 @@ except ImportError:
     _HAS_AUDIT = False
     AUDIT_DIR = Path(__file__).parent / "data" / "audit_results"
 
+try:
+    from rubric_builder import (
+        _new_session, get_session, delete_session, extract_questions,
+        start_refinement, respond_to_refinement, skip_question,
+        advance_question, jump_to_question, auto_enhance,
+        build_enhanced_rubric, format_for_grading_prompt,
+        generate_mapping, apply_mapping,
+        save_draft, load_draft, get_draft_info, discard_draft,
+    )
+    _HAS_BUILDER = True
+except ImportError:
+    _HAS_BUILDER = False
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -137,6 +150,11 @@ def inject_private_mode():
 @app.context_processor
 def inject_dark_mode():
     return {"dark_mode": session.get("dark_mode", False)}
+
+
+@app.context_processor
+def inject_has_builder():
+    return {"has_builder": _HAS_BUILDER}
 
 
 def _safe_redirect_back():
@@ -241,7 +259,9 @@ def init_db():
         ("rubrics", "rubric_file_path", "TEXT"),
         ("exams",   "student_sid",      "TEXT"),
         ("rubrics", "total_points",     "REAL"),
+        ("rubrics", "enhanced_rubric",  "TEXT"),
         ("exams",   "reviewed",         "INTEGER DEFAULT 0"),
+        ("roster",  "email",            "TEXT"),
     ]
     _ALLOWED_TABLES = {"exams", "rubrics", "roster"}
     for table, col, typedef in migrations:
@@ -633,9 +653,31 @@ def setup():
         return redirect(url_for("setup"))
 
     rubrics = db.execute(
-        "SELECT DISTINCT version, MAX(created_at) as updated FROM rubrics GROUP BY version"
+        "SELECT DISTINCT version, MAX(created_at) as updated, enhanced_rubric FROM rubrics GROUP BY version"
     ).fetchall()
-    return render_template("setup.html", rubrics=rubrics)
+    section = request.args.get("section", "upload")
+    builder_rubrics = []
+    draft_info = None
+    if _HAS_BUILDER and section == "builder":
+        builder_rubrics = db.execute(
+            "SELECT DISTINCT version, MAX(created_at) as updated, total_points, enhanced_rubric "
+            "FROM rubrics GROUP BY version"
+        ).fetchall()
+        draft_info = get_draft_info()
+    # Find the primary enhanced version (has enhanced_rubric without mapped_from)
+    primary_enhanced = None
+    for br in builder_rubrics:
+        if br["enhanced_rubric"]:
+            try:
+                edata = json.loads(br["enhanced_rubric"])
+                if not edata.get("mapped_from"):
+                    primary_enhanced = br["version"]
+                    break
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return render_template("setup.html", rubrics=rubrics, section=section,
+                           builder_rubrics=builder_rubrics, draft_info=draft_info,
+                           primary_enhanced=primary_enhanced)
 
 
 @app.route("/setup/delete/<version>", methods=["POST"])
@@ -804,7 +846,17 @@ def _grade_exam(exam_row, rubric) -> dict:
         })
         exam_blocks.append({"type": "text", "text": f"[Page {page_num + 1}]"})
 
-    content = rubric_blocks + [
+    # --- Enhanced rubric (partial credit guide) if available ---
+    enhanced_blocks = []
+    if _HAS_BUILDER and rubric.get("enhanced_rubric"):
+        try:
+            enhanced = json.loads(rubric["enhanced_rubric"])
+            enhanced_text = format_for_grading_prompt(enhanced)
+            enhanced_blocks = [{"type": "text", "text": enhanced_text}]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    content = rubric_blocks + enhanced_blocks + [
         {"type": "text", "text": "--- EXAM ANSWER PAGES ---"},
         *exam_blocks,
         {
@@ -1844,19 +1896,20 @@ def roster():
             first = row[0].strip()
             last  = row[1].strip()
             sid   = row[2].strip() if len(row) >= 3 else ""
+            email = row[3].strip() if len(row) >= 4 else ""
             # Skip header row (first row whose first cell looks like a label)
             if i == 0 and first.lower() in ("first", "first_name", "firstname", "first name"):
                 continue
             if not first and not last:
                 continue
-            entries.append((first, last, sid))
+            entries.append((first, last, sid, email))
 
         if not entries:
             flash("No valid rows found in CSV (need at least first_name, last_name columns).", "danger")
             return redirect(url_for("roster"))
 
         db.execute("DELETE FROM roster")
-        db.executemany("INSERT INTO roster (first_name, last_name, sid) VALUES (?, ?, ?)", entries)
+        db.executemany("INSERT INTO roster (first_name, last_name, sid, email) VALUES (?, ?, ?, ?)", entries)
         db.commit()
         flash(f"Loaded {len(entries)} students from roster.", "success")
         return redirect(url_for("roster"))
@@ -2588,6 +2641,614 @@ def insights_refresh():
         flash(f"Insights refresh failed: {e}", "danger")
 
     return redirect(url_for("quality_dashboard", section="insights"))
+
+
+# ---------------------------------------------------------------------------
+# Rubric Builder routes
+# ---------------------------------------------------------------------------
+
+
+def _save_enhanced_to_db(sid: str) -> tuple:
+    """Build enhanced rubric from session, save to DB, clean up. Returns (version, other_versions) or raises."""
+    enhanced = build_enhanced_rubric(sid)
+    if not enhanced:
+        return None, None
+
+    version = enhanced["version"]
+    db = get_db()
+    db.execute(
+        "UPDATE rubrics SET enhanced_rubric=? WHERE version=? AND id = "
+        "(SELECT MAX(id) FROM rubrics WHERE version=?)",
+        (json.dumps(enhanced, indent=2), version, version)
+    )
+    db.commit()
+    delete_session(sid)
+    discard_draft()
+
+    other_versions = [
+        r["version"] for r in db.execute(
+            "SELECT DISTINCT version FROM rubrics WHERE version != ?", (version,)
+        ).fetchall()
+    ]
+    return version, other_versions
+
+
+@app.route("/rubric-builder/resume", methods=["POST"])
+def builder_resume():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    sess = load_draft()
+    if not sess:
+        return jsonify({"error": "No draft found"}), 404
+    return jsonify({
+        "session_id": sess["id"],
+        "questions": sess["questions"],
+        "total_q": len(sess["questions"]),
+        "current_q": sess["current_q"],
+        "phase": sess["phase"],
+        "version": sess["version"],
+    })
+
+
+@app.route("/rubric-builder/discard", methods=["POST"])
+def builder_discard():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    info = get_draft_info()
+    if info:
+        delete_session(info["session_id"])
+    discard_draft()
+    return jsonify({"success": True})
+
+
+@app.route("/rubric-builder/extract", methods=["POST"])
+def builder_extract():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    version = request.form.get("version", "").strip().upper()
+    if not version:
+        return jsonify({"error": "No version selected"}), 400
+    rubric = get_rubric(version)
+    if not rubric:
+        return jsonify({"error": f"No rubric found for version {version}"}), 404
+
+    sid = _new_session(version, rubric["content"], rubric["total_points"])
+    sess = extract_questions(sid)
+
+    if sess.get("error"):
+        delete_session(sid)
+        return jsonify({"error": sess["error"]}), 500
+
+    return jsonify({
+        "session_id": sid,
+        "questions": sess["questions"],
+        "total_q": len(sess["questions"]),
+    })
+
+
+@app.route("/rubric-builder/auto-enhance", methods=["POST"])
+def builder_auto_enhance():
+    """Run AI auto-enhancement, save to DB, return version for view/edit."""
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    if not sid:
+        return jsonify({"error": "No session_id"}), 400
+
+    result = auto_enhance(sid)
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 500
+
+    version, other_versions = _save_enhanced_to_db(sid)
+    if not version:
+        return jsonify({"error": "Failed to build enhanced rubric"}), 500
+
+    return jsonify({"success": True, "version": version,
+                     "other_versions": other_versions})
+
+
+@app.route("/rubric-builder/refine/start", methods=["POST"])
+def builder_refine_start():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    if not sid:
+        return jsonify({"error": "No session_id"}), 400
+
+    result = start_refinement(sid)
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 400
+    return jsonify(result)
+
+
+@app.route("/rubric-builder/refine/respond", methods=["POST"])
+def builder_refine_respond():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    choice = body.get("choice")
+    if not sid or not choice:
+        return jsonify({"error": "Missing session_id or choice"}), 400
+
+    result = respond_to_refinement(
+        sid, choice,
+        custom_points=body.get("custom_points"),
+        custom_rationale=body.get("custom_rationale"),
+    )
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 400
+    return jsonify(result)
+
+
+@app.route("/rubric-builder/refine/skip", methods=["POST"])
+def builder_refine_skip():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    if not sid:
+        return jsonify({"error": "No session_id"}), 400
+
+    result = skip_question(sid)
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 400
+    return jsonify({"phase": result["phase"], "current_q": result["current_q"],
+                     "total_q": len(result["questions"])})
+
+
+@app.route("/rubric-builder/refine/advance", methods=["POST"])
+def builder_refine_advance():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    if not sid:
+        return jsonify({"error": "No session_id"}), 400
+
+    result = advance_question(sid)
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 400
+    return jsonify({"phase": result["phase"], "current_q": result["current_q"],
+                     "total_q": len(result["questions"])})
+
+
+@app.route("/rubric-builder/refine/jump", methods=["POST"])
+def builder_refine_jump():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    target_q = body.get("target_q")
+    if not sid or target_q is None:
+        return jsonify({"error": "Missing session_id or target_q"}), 400
+
+    result = jump_to_question(sid, int(target_q))
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 400
+    return jsonify({"phase": result["phase"], "current_q": result["current_q"],
+                     "total_q": len(result["questions"])})
+
+
+@app.route("/rubric-builder/save", methods=["POST"])
+def builder_save():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    sid = body.get("session_id")
+    if not sid:
+        return jsonify({"error": "No session_id"}), 400
+
+    version, other_versions = _save_enhanced_to_db(sid)
+    if not version:
+        return jsonify({"error": "Session not found"}), 404
+
+    flash(f"Enhanced rubric saved for Version {version}.", "success")
+    return jsonify({"success": True, "version": version,
+                     "other_versions": other_versions})
+
+
+@app.route("/rubric-builder/session/<sid>")
+def builder_session_status(sid):
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    sess = get_session(sid)
+    if not sess:
+        return jsonify({"error": "Session not found"}), 404
+    return jsonify({
+        "phase": sess["phase"],
+        "current_q": sess["current_q"],
+        "total_q": len(sess["questions"]),
+        "questions": sess["questions"],
+        "error": sess["error"],
+    })
+
+
+@app.route("/rubric-builder/session-enhanced/<version>")
+def builder_view_enhanced(version):
+    """Return the saved enhanced rubric for viewing/editing."""
+    db = get_db()
+    rubric = db.execute(
+        "SELECT enhanced_rubric FROM rubrics WHERE version=? AND enhanced_rubric IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1", (version.upper(),)
+    ).fetchone()
+    if not rubric or not rubric["enhanced_rubric"]:
+        return jsonify({"error": f"No enhanced rubric for version {version}"}), 404
+    enhanced = json.loads(rubric["enhanced_rubric"])
+    return jsonify(enhanced)
+
+
+@app.route("/rubric-builder/update-enhanced", methods=["POST"])
+def builder_update_enhanced():
+    """Save inline edits to an enhanced rubric."""
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True)
+    if not body or not body.get("version"):
+        return jsonify({"error": "Missing data"}), 400
+
+    version = body["version"].strip().upper()
+    enhanced_json = json.dumps(body, indent=2)
+
+    db = get_db()
+    db.execute(
+        "UPDATE rubrics SET enhanced_rubric=? WHERE version=? AND id = "
+        "(SELECT MAX(id) FROM rubrics WHERE version=?)",
+        (enhanced_json, version, version)
+    )
+    db.commit()
+    return jsonify({"success": True, "version": version})
+
+
+@app.route("/rubric-builder/remove-enhanced", methods=["POST"])
+def builder_remove_enhanced():
+    """Remove enhancement from a rubric version."""
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    version = body.get("version", "").strip().upper()
+    if not version:
+        return jsonify({"error": "No version specified"}), 400
+
+    db = get_db()
+    db.execute(
+        "UPDATE rubrics SET enhanced_rubric=NULL WHERE version=?",
+        (version,)
+    )
+    db.commit()
+    return jsonify({"success": True, "version": version})
+
+
+@app.route("/rubric-builder/map/generate", methods=["POST"])
+def builder_map_generate():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    primary_version = body.get("primary_version", "").strip().upper()
+    target_version = body.get("target_version", "").strip().upper()
+    if not primary_version or not target_version:
+        return jsonify({"error": "Missing primary or target version"}), 400
+
+    db = get_db()
+    primary = db.execute(
+        "SELECT enhanced_rubric FROM rubrics WHERE version=? AND enhanced_rubric IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1", (primary_version,)
+    ).fetchone()
+    if not primary or not primary["enhanced_rubric"]:
+        return jsonify({"error": f"No enhanced rubric for version {primary_version}"}), 404
+
+    target = db.execute(
+        "SELECT content, total_points FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
+        (target_version,)
+    ).fetchone()
+    if not target:
+        return jsonify({"error": f"No rubric found for version {target_version}"}), 404
+
+    enhanced = json.loads(primary["enhanced_rubric"])
+    result = generate_mapping(enhanced, target["content"], target_version)
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 500
+
+    return jsonify(result)
+
+
+@app.route("/rubric-builder/map/apply", methods=["POST"])
+def builder_map_apply():
+    if not _HAS_BUILDER:
+        return jsonify({"error": "Builder not available"}), 503
+    body = request.get_json(silent=True) or {}
+    primary_version = body.get("primary_version", "").strip().upper()
+    target_version = body.get("target_version", "").strip().upper()
+    mappings = body.get("mappings", [])
+    if not primary_version or not target_version or not mappings:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    db = get_db()
+    primary = db.execute(
+        "SELECT enhanced_rubric FROM rubrics WHERE version=? AND enhanced_rubric IS NOT NULL "
+        "ORDER BY id DESC LIMIT 1", (primary_version,)
+    ).fetchone()
+    if not primary:
+        return jsonify({"error": f"No enhanced rubric for version {primary_version}"}), 404
+
+    target = db.execute(
+        "SELECT total_points FROM rubrics WHERE version=? ORDER BY id DESC LIMIT 1",
+        (target_version,)
+    ).fetchone()
+    if not target:
+        return jsonify({"error": f"No rubric for version {target_version}"}), 404
+
+    enhanced = json.loads(primary["enhanced_rubric"])
+    mapped = apply_mapping(enhanced, mappings, target_version, target.get("total_points"))
+    mapped_json = json.dumps(mapped, indent=2)
+
+    db.execute(
+        "UPDATE rubrics SET enhanced_rubric=? WHERE version=? AND id = "
+        "(SELECT MAX(id) FROM rubrics WHERE version=?)",
+        (mapped_json, target_version, target_version)
+    )
+    db.commit()
+
+    return jsonify({"success": True, "version": target_version,
+                     "questions_mapped": len(mapped["questions"])})
+
+
+# ---------------------------------------------------------------------------
+# Student Report PDF + Email Distribution
+# ---------------------------------------------------------------------------
+
+def _generate_student_pdf(exam_row, gd) -> bytes:
+    """Generate a per-student grade report PDF (no scans) using reportlab."""
+    from reportlab.lib import colors as rl_colors
+    from reportlab.lib.pagesizes import letter as rl_letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
+    )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=rl_letter,
+                            leftMargin=0.75*inch, rightMargin=0.75*inch,
+                            topMargin=0.75*inch, bottomMargin=0.75*inch)
+
+    styles = getSampleStyleSheet()
+    navy = rl_colors.HexColor("#1a2744")
+    accent = rl_colors.HexColor("#3b82f6")
+    green = rl_colors.HexColor("#16a34a")
+    red_c = rl_colors.HexColor("#dc2626")
+    light_bg = rl_colors.HexColor("#f8fafc")
+    border_c = rl_colors.HexColor("#cbd5e1")
+
+    title_style = ParagraphStyle("RPTitle", parent=styles["Title"],
+                                 textColor=navy, fontSize=20, spaceAfter=4)
+    subtitle_style = ParagraphStyle("RPSub", parent=styles["Normal"],
+                                    textColor=rl_colors.HexColor("#475569"),
+                                    fontSize=10, spaceAfter=12)
+    heading_style = ParagraphStyle("RPH2", parent=styles["Heading2"],
+                                   textColor=navy, fontSize=13, spaceBefore=16, spaceAfter=8)
+    body_style = ParagraphStyle("RPBody", parent=styles["Normal"], fontSize=10, leading=14)
+    fb_style = ParagraphStyle("RPFB", parent=styles["Normal"], fontSize=9, leading=12,
+                              textColor=rl_colors.HexColor("#374151"))
+
+    story = []
+
+    # Header
+    story.append(Paragraph("Exam Grade Report", title_style))
+    total_possible = float(gd.get("total_possible", 0))
+    total_earned = float(gd.get("total_earned", 0))
+    pct = total_earned / total_possible * 100 if total_possible else 0
+    grade = gd.get("letter_grade", "?")
+
+    info_lines = [f"<b>{exam_row['student_name']}</b>"]
+    if exam_row.get("student_sid"):
+        info_lines.append(f"SID: {exam_row['student_sid']}")
+    info_lines.append(f"Version {exam_row['version']} - Batch {exam_row['batch']}")
+    story.append(Paragraph(" &nbsp;|&nbsp; ".join(info_lines), subtitle_style))
+    story.append(HRFlowable(width="100%", thickness=1, color=border_c, spaceAfter=12))
+
+    # Score summary
+    grade_color = green if pct >= 70 else (rl_colors.HexColor("#d97706") if pct >= 60 else red_c)
+    story.append(Paragraph(
+        f"<b>Score:</b> {total_earned} / {total_possible} &nbsp;&nbsp; "
+        f"<b>Percentage:</b> {pct:.1f}% &nbsp;&nbsp; "
+        f"<font color='{grade_color.hexval()}'><b>Grade: {grade}</b></font>",
+        body_style
+    ))
+    story.append(Spacer(1, 12))
+
+    # Question breakdown table
+    scores = gd.get("scores", [])
+    if scores:
+        story.append(Paragraph("Question Breakdown", heading_style))
+        header = [
+            Paragraph("<b>Question</b>", fb_style),
+            Paragraph("<b>Earned</b>", fb_style),
+            Paragraph("<b>Max</b>", fb_style),
+            Paragraph("<b>Feedback</b>", fb_style),
+        ]
+        table_data = [header]
+        for s in scores:
+            fb_text = str(s.get("feedback", "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            table_data.append([
+                Paragraph(str(s["question"]), fb_style),
+                Paragraph(str(s["earned_points"]), fb_style),
+                Paragraph(str(s["max_points"]), fb_style),
+                Paragraph(fb_text, fb_style),
+            ])
+
+        col_widths = [0.7*inch, 0.7*inch, 0.6*inch, 4.5*inch]
+        t = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+        # Row-level shading
+        t_style_cmds = [
+            ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#e2e8f0")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), navy),
+            ("GRID", (0, 0), (-1, -1), 0.5, border_c),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]
+        for idx, s in enumerate(scores, start=1):
+            ep = float(s.get("earned_points", 0))
+            mp = float(s.get("max_points", 1))
+            if ep == mp:
+                t_style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), rl_colors.HexColor("#f0fdf4")))
+            elif mp > 0 and ep / mp < 0.7:
+                t_style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), rl_colors.HexColor("#fef2f2")))
+            else:
+                t_style_cmds.append(("BACKGROUND", (0, idx), (-1, idx), light_bg))
+
+        t.setStyle(TableStyle(t_style_cmds))
+        story.append(t)
+
+    # Overall feedback
+    overall = gd.get("overall_feedback", "")
+    if overall:
+        story.append(Paragraph("Overall Feedback", heading_style))
+        overall_escaped = overall.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        story.append(Paragraph(overall_escaped, body_style))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+try:
+    from gmail_sender import send_email as gmail_send, is_configured as gmail_is_configured, get_sender_email
+    _HAS_GMAIL = True
+except ImportError:
+    _HAS_GMAIL = False
+
+
+@app.route("/email/preview", methods=["POST"])
+def email_preview():
+    """Return count of students with email addresses for the current filter."""
+    db = get_db()
+    version_filter = request.json.get("version", "").strip().upper() or None
+    batch_filter = request.json.get("batch")
+    try:
+        batch_filter = int(batch_filter)
+    except (ValueError, TypeError):
+        batch_filter = None
+
+    query = """
+        SELECT COUNT(*) FROM exams e
+        JOIN roster r ON e.student_sid = r.sid
+        WHERE e.grade_data IS NOT NULL AND e.reviewed = 1
+        AND r.email IS NOT NULL AND r.email != ''
+    """
+    params = []
+    if version_filter:
+        query += " AND e.version = ?"
+        params.append(version_filter)
+    if batch_filter:
+        query += " AND e.batch = ?"
+        params.append(batch_filter)
+
+    count = db.execute(query, params).fetchone()[0]
+    total_graded = db.execute(
+        "SELECT COUNT(*) FROM exams WHERE grade_data IS NOT NULL"
+    ).fetchone()[0]
+    total_reviewed = db.execute(
+        "SELECT COUNT(*) FROM exams WHERE grade_data IS NOT NULL AND reviewed = 1"
+    ).fetchone()[0]
+
+    gmail_ok = _HAS_GMAIL and gmail_is_configured()
+    sender = get_sender_email() if gmail_ok else None
+
+    return jsonify({
+        "email_ready": count,
+        "total_graded": total_graded,
+        "total_reviewed": total_reviewed,
+        "gmail_configured": gmail_ok,
+        "sender_email": sender,
+    })
+
+
+@app.route("/email/send", methods=["POST"])
+def email_send():
+    """Send grade report PDFs to students via Gmail OAuth2."""
+    if not _HAS_GMAIL or not gmail_is_configured():
+        return jsonify({"error": "Gmail not configured. Run: python gmail_sender.py --setup berkeley"}), 500
+
+    db = get_db()
+    body = request.get_json()
+    if not body:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    subject = body.get("subject", "").strip()
+    message = body.get("message", "").strip()
+    test_mode = body.get("test_mode", True)
+    test_email = body.get("test_email", "").strip()
+    test_limit = int(body.get("test_limit", 10))
+    version_filter = body.get("version", "").strip().upper() or None
+    batch_filter = body.get("batch")
+    try:
+        batch_filter = int(batch_filter)
+    except (ValueError, TypeError):
+        batch_filter = None
+
+    if not subject or not message:
+        return jsonify({"error": "Subject and message are required"}), 400
+    if test_mode and not test_email:
+        return jsonify({"error": "Test email address is required in test mode"}), 400
+
+    # Query exams with roster email
+    query = """
+        SELECT e.*, r.email, r.first_name, r.last_name FROM exams e
+        JOIN roster r ON e.student_sid = r.sid
+        WHERE e.grade_data IS NOT NULL AND e.reviewed = 1
+        AND r.email IS NOT NULL AND r.email != ''
+    """
+    params = []
+    if version_filter:
+        query += " AND e.version = ?"
+        params.append(version_filter)
+    if batch_filter:
+        query += " AND e.batch = ?"
+        params.append(batch_filter)
+    query += " ORDER BY e.student_name"
+
+    rows = db.execute(query, params).fetchall()
+    if not rows:
+        return jsonify({"error": "No students with email addresses found"}), 404
+
+    if test_mode:
+        rows = rows[:test_limit]
+
+    sent = 0
+    errors = []
+    for row in rows:
+        try:
+            gd = json.loads(row["grade_data"])
+            pdf_bytes = _generate_student_pdf(dict(row), gd)
+
+            personal_msg = message.replace("{name}", row["first_name"])
+            recipient = test_email if test_mode else row["email"]
+            safe_name = re.sub(r'[^\w\-.]', '_', row["student_name"])
+
+            gmail_send(
+                to=recipient,
+                subject=subject,
+                body=personal_msg,
+                pdf_bytes=pdf_bytes,
+                pdf_filename=f"Grade_Report_{safe_name}.pdf",
+            )
+            sent += 1
+        except Exception as e:
+            errors.append({"student": row["student_name"], "error": str(e)})
+
+    result = {"sent": sent, "total": len(rows)}
+    if test_mode:
+        result["test_email"] = test_email
+    if errors:
+        result["errors"] = errors
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------

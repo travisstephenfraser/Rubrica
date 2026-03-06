@@ -21,7 +21,7 @@
       <div class="card-header bg-white fw-semibold">Upload Roster CSV</div>
       <div class="card-body">
         <p class="text-muted small mb-3">
-          CSV format: <code>first_name, last_name, sid</code> (header row optional, SID optional).<br>
+          CSV format: <code>first_name, last_name, sid, email</code> (header row optional, SID &amp; email optional).<br>
           Uploading a new file <strong>replaces</strong> the existing roster.
         </p>
         <form method="POST" enctype="multipart/form-data" action="/roster">
@@ -59,7 +59,7 @@
           {% if preview %}
           <table class="table table-sm table-bordered mb-3">
             <thead class="table-light">
-              <tr><th>First Name</th><th>Last Name</th><th>SID</th></tr>
+              <tr><th>First Name</th><th>Last Name</th><th>SID</th><th>Email</th></tr>
             </thead>
             <tbody>
               {% for row in preview %}
@@ -67,6 +67,7 @@
                 <td>{% if show_names and not private_mode %}{{ row.first_name }}{% else %}<span class="text-muted fst-italic">Hidden</span>{% endif %}</td>
                 <td>{% if show_names and not private_mode %}{{ row.last_name }}{% else %}<span class="text-muted fst-italic">Hidden</span>{% endif %}</td>
                 <td class="font-monospace">{% if show_names and not private_mode %}{{ row.sid or '—' }}{% else %}<span class="text-muted fst-italic">Hidden</span>{% endif %}</td>
+                <td>{% if show_names and not private_mode %}{{ row.email or '—' }}{% else %}<span class="text-muted fst-italic">Hidden</span>{% endif %}</td>
               </tr>
               {% endfor %}
             </tbody>

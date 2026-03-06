@@ -37,4 +37,10 @@ generate_review_checklist.py
 generate_grading_overview.py
 templates/quality.html
 templates/audit_confirm.html
+rubric_builder.py
+templates/rubric_builder.html
 .claude/agents/testing
+
+# Gmail OAuth sender (tokens + proprietary)
+gmail_sender.py
+gmail_accounts.json

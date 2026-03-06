@@ -6,6 +6,10 @@
   <div class="d-flex gap-2">
     <a href="/export{% if version_filter or batch_filter %}?{% if version_filter %}version={{ version_filter }}{% endif %}{% if version_filter and batch_filter %}&{% endif %}{% if batch_filter %}batch={{ batch_filter }}{% endif %}{% endif %}" class="btn btn-success btn-sm">⬇ Summary CSV</a>
     <a href="/export-detailed{% if version_filter or batch_filter %}?{% if version_filter %}version={{ version_filter }}{% endif %}{% if version_filter and batch_filter %}&{% endif %}{% if batch_filter %}batch={{ batch_filter }}{% endif %}{% endif %}" class="btn btn-outline-success btn-sm">⬇ Detailed CSV</a>
+    <button type="button" class="btn btn-primary btn-sm" id="emailBtn"
+            onclick="openEmailModal()" title="Email grade reports to students">
+      ✉ Email Reports
+    </button>
   </div>
 </div>
 
@@ -456,4 +460,215 @@ window.toggleAllDetails = function(expand) {
 <div class="d-flex justify-content-start mt-4">
   <a href="/exams" class="btn btn-secondary">← Back</a>
 </div>
+
+<!-- Email Reports Modal -->
+<div class="modal fade" id="emailModal" tabindex="-1" aria-labelledby="emailModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="emailModalLabel">Email Grade Reports</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="emailStatus" class="alert alert-info py-2 small mb-3">
+          Loading student email data...
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Subject</label>
+          <input type="text" class="form-control" id="emailSubject"
+                 value="Exam ______ Has Been Graded">
+          <div class="form-text">Replace the blank with your exam name.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Message Body</label>
+          <textarea class="form-control" id="emailBody" rows="4">Hi {name},
+
+Your exam has been graded. Please review the attached report for your score and per-question feedback.
+
+If you have questions about your grade, please bring your concerns to office hours.
+
+Best,
+Travis Fraser</textarea>
+          <div class="form-text">Use <code>{name}</code> to insert the student's first name.</div>
+        </div>
+
+        <hr>
+
+        <div class="mb-3" id="gmailStatus">
+          <label class="form-label fw-semibold">Gmail Connection</label>
+          <div id="gmailStatusMsg" class="small text-muted">Checking...</div>
+        </div>
+
+        <hr>
+
+        <div class="mb-3">
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="sendMode" id="modeTest" value="test" checked
+                   onchange="toggleTestFields()">
+            <label class="form-check-label" for="modeTest">Test mode (send to me)</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="sendMode" id="modeSend" value="send"
+                   onchange="toggleTestFields()">
+            <label class="form-check-label" for="modeSend">Send to all students</label>
+          </div>
+        </div>
+
+        <div id="testFields">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-6">
+              <label class="form-label">Your email (receives all test emails)</label>
+              <input type="email" class="form-control form-control-sm" id="testEmail"
+                     placeholder="you@gmail.com">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">How many</label>
+              <input type="number" class="form-control form-control-sm" id="testLimit"
+                     value="10" min="1" max="50">
+            </div>
+          </div>
+        </div>
+
+        <div id="sendConfirm" class="d-none mt-3">
+          <div class="alert alert-warning py-2">
+            <strong>This will send real emails to students.</strong> Make sure you've tested first.
+          </div>
+        </div>
+
+        <!-- Progress -->
+        <div id="emailProgress" class="d-none mt-3">
+          <div class="d-flex align-items-center gap-2">
+            <div class="spinner-border spinner-border-sm text-primary"></div>
+            <span id="emailProgressText">Sending...</span>
+          </div>
+        </div>
+
+        <!-- Result -->
+        <div id="emailResult" class="d-none mt-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="emailSendBtn" onclick="sendEmails()">
+          Send Test Emails
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.openEmailModal = function () {
+  var modal = new bootstrap.Modal(document.getElementById('emailModal'));
+  modal.show();
+
+  // Fetch preview count
+  var payload = {};
+  {% if version_filter %}payload.version = '{{ version_filter }}';{% endif %}
+  {% if batch_filter %}payload.batch = '{{ batch_filter }}';{% endif %}
+
+  fetch('/email/preview', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var el = document.getElementById('emailStatus');
+      if (d.email_ready === 0) {
+        el.className = 'alert alert-danger py-2 small mb-3';
+        el.innerHTML = '<strong>No students with email addresses found.</strong> Upload a roster CSV with an email column first.';
+        document.getElementById('emailSendBtn').disabled = true;
+      } else {
+        el.className = 'alert alert-info py-2 small mb-3';
+        el.innerHTML = '<strong>' + d.email_ready + '</strong> students with email addresses ready. '
+          + d.total_reviewed + ' / ' + d.total_graded + ' exams reviewed.';
+        document.getElementById('emailSendBtn').disabled = !d.gmail_configured;
+      }
+
+      // Gmail connection status
+      var gs = document.getElementById('gmailStatusMsg');
+      if (d.gmail_configured) {
+        gs.innerHTML = '<span class="text-success">Connected</span> — sending from <strong>' + d.sender_email + '</strong>';
+      } else {
+        gs.innerHTML = '<span class="text-danger">Not configured.</span> Run <code>python gmail_sender.py --setup berkeley</code> in your terminal.';
+        document.getElementById('emailSendBtn').disabled = true;
+      }
+    })
+    .catch(function () {
+      document.getElementById('emailStatus').className = 'alert alert-danger py-2 small mb-3';
+      document.getElementById('emailStatus').textContent = 'Error loading email data.';
+    });
+};
+
+window.toggleTestFields = function () {
+  var isTest = document.getElementById('modeTest').checked;
+  document.getElementById('testFields').classList.toggle('d-none', !isTest);
+  document.getElementById('sendConfirm').classList.toggle('d-none', isTest);
+  document.getElementById('emailSendBtn').textContent = isTest ? 'Send Test Emails' : 'Send to All Students';
+  document.getElementById('emailSendBtn').className = isTest ? 'btn btn-primary' : 'btn btn-danger';
+};
+
+window.sendEmails = function () {
+  var isTest = document.getElementById('modeTest').checked;
+  if (!isTest && !confirm('Send grade reports to ALL students with email addresses?')) return;
+
+  var payload = {
+    subject: document.getElementById('emailSubject').value,
+    message: document.getElementById('emailBody').value,
+    test_mode: isTest,
+    test_email: document.getElementById('testEmail').value,
+    test_limit: parseInt(document.getElementById('testLimit').value) || 10,
+  };
+  {% if version_filter %}payload.version = '{{ version_filter }}';{% endif %}
+  {% if batch_filter %}payload.batch = '{{ batch_filter }}';{% endif %}
+
+  document.getElementById('emailProgress').classList.remove('d-none');
+  document.getElementById('emailResult').classList.add('d-none');
+  document.getElementById('emailSendBtn').disabled = true;
+
+  fetch('/email/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      document.getElementById('emailProgress').classList.add('d-none');
+      document.getElementById('emailSendBtn').disabled = false;
+      var el = document.getElementById('emailResult');
+      el.classList.remove('d-none');
+
+      if (d.error) {
+        el.className = 'alert alert-danger py-2 small mt-3';
+        el.textContent = d.error;
+        return;
+      }
+
+      var html = '<strong>' + d.sent + ' / ' + d.total + '</strong> emails sent successfully.';
+      if (d.test_email) html += ' (all to ' + d.test_email + ')';
+      if (d.errors && d.errors.length) {
+        html += '<br><strong>Errors:</strong><ul>';
+        d.errors.forEach(function (e) {
+          html += '<li>' + e.student + ': ' + e.error + '</li>';
+        });
+        html += '</ul>';
+      }
+      el.className = d.errors && d.errors.length
+        ? 'alert alert-warning py-2 small mt-3'
+        : 'alert alert-success py-2 small mt-3';
+      el.innerHTML = html;
+    })
+    .catch(function (err) {
+      document.getElementById('emailProgress').classList.add('d-none');
+      document.getElementById('emailSendBtn').disabled = false;
+      var el = document.getElementById('emailResult');
+      el.classList.remove('d-none');
+      el.className = 'alert alert-danger py-2 small mt-3';
+      el.textContent = 'Request failed: ' + err;
+    });
+};
+</script>
+
 {% endblock %}
