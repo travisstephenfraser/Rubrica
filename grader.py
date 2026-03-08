@@ -772,7 +772,7 @@ def delete_all_exams():
             Path(row["file_path"]).unlink(missing_ok=True)
             deleted_files += 1
         except Exception as e:
-            app.logger.warning(f"Could not delete file {row['file_path']}: {e}")
+            _log.warning(f"Could not delete file {row['file_path']}: {e}")
             failed_files += 1
     db.execute("DELETE FROM exams")
     db.commit()
@@ -795,7 +795,7 @@ def delete_exam(anon_id):
     try:
         Path(exam["file_path"]).unlink(missing_ok=True)
     except Exception as e:
-        app.logger.warning(f"Could not delete file for {anon_id}: {e}")
+        _log.warning(f"Could not delete file for {anon_id}: {e}")
 
     db.execute("DELETE FROM exams WHERE anon_id=?", (anon_id,))
     db.commit()
@@ -817,7 +817,7 @@ def delete_selected():
         try:
             Path(exam["file_path"]).unlink(missing_ok=True)
         except Exception as e:
-            app.logger.warning(f"Could not delete file for {aid}: {e}")
+            _log.warning(f"Could not delete file for {aid}: {e}")
             failed += 1
         db.execute("DELETE FROM exams WHERE anon_id=?", (aid,))
         removed += 1
@@ -1555,7 +1555,7 @@ def clear_grade(anon_id):
     )
     db.commit()
     flash(f"Grade cleared for {anon_id}.", "success")
-    return redirect(request.referrer or url_for("exams"))
+    return _safe_redirect_back("exams")
 
 
 @app.route("/clear-all-grades", methods=["POST"])
@@ -2762,7 +2762,7 @@ def insights_refresh():
         save_insights(data)
         flash("Insights refreshed." + (f" (runs since {since})" if since else ""), "success")
     except Exception as e:
-        logger.exception("Insights refresh failed")
+        _log.exception("Insights refresh failed")
         flash(f"Insights refresh failed: {e}", "danger")
 
     return redirect(url_for("quality_dashboard", section="insights"))
@@ -3388,4 +3388,5 @@ if __name__ == "__main__":
     print(f"   OCR model : {OLLAMA_VISION_MODEL}  (change OLLAMA_VISION_MODEL to swap)")
     print("   Grading   : Claude Sonnet via Anthropic API (anonymous IDs only)")
     print("   Open: http://localhost:5000\n")
-    app.run(debug=True, port=5000, use_reloader=False)
+    app.run(debug=os.environ.get("FLASK_DEBUG", "").lower() == "true",
+            host="127.0.0.1", port=5000, use_reloader=False)
