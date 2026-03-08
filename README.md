@@ -12,10 +12,11 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 2. **Upload a roster** *(optional)* — CSV of student names and SIDs for fuzzy matching during name assignment
 3. **Upload exams** — up to 3 batch PDFs at once; the app splits all of them by page count and merges into one review session
 4. **Assign names** — a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors; extraction runs in the background with live progress and an abort button
-5. **Grade** — Claude Sonnet reads each answer page (with 2x contrast enhancement) and scores against the rubric using only an anonymous ID; boundary scores are automatically re-graded in a second pass; vague feedback is refined to cite specific rubric criteria
-6. **Review & adjust** — inline score editing per question, per-student printable reports, summary and detailed CSV exports; all grades mapped back to names locally
-7. **Analyze** — grade distribution histogram, letter grade breakdown, per-question difficulty charts with version filtering
-8. **Audit** *(optional)* — re-grade a sample with Gemini 3.1 Pro as an independent reference scorer; generate a PDF validation report with ETS benchmark comparisons
+5. **Enhance rubric** *(optional)* — the built-in rubric builder refines your rubric with structured partial credit tiers, common error patterns, and expected answers to improve grading consistency
+6. **Grade** — Claude Sonnet reads each answer page (with 2x contrast enhancement) and scores against the rubric using only an anonymous ID; boundary scores are automatically re-graded in a second pass; vague feedback is refined to cite specific rubric criteria
+7. **Review & adjust** — inline score editing per question, per-student printable reports, summary and detailed CSV exports; all grades mapped back to names locally
+8. **Analyze** — grade distribution histogram, letter grade breakdown, per-question difficulty charts with version filtering
+9. **Audit** *(optional)* — re-grade a sample with Gemini 3.1 Pro as an independent reference scorer; generate a PDF validation report with ETS benchmark comparisons
 
 ---
 
@@ -28,6 +29,7 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Cover page vision** — local Ollama vision model auto-extracts names and SIDs in the background; abortable with live progress
 - **Cover page consistency check** — perceptual hash flags exams whose cover page differs from the majority
 - **Roster fuzzy matching** — local name/SID matching with character confusion corrections (O→0, l→1, etc.)
+- **Auto roster matching** — after OCR completes, exams are automatically matched against the uploaded roster
 - **Scan modal** — page-by-page exam viewer for verifying all pages are attached before confirming
 - **Persistent review tab** — nav tab appears whenever an unsaved review session exists; survives page navigation and restarts
 - **Launch Ollama button** — one-click startup from the upload page with GPU-enable reminder
@@ -38,7 +40,9 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Feedback specificity enforcement** — vague feedback ("Good work", "Incorrect", <8 words) is refined via a follow-up API call requiring rubric-anchored justification
 - **Faint pencil handling** — 2x contrast enhancement on exam images before grading
 - **Deterministic scoring** — temperature 0.0 on all API calls
-- **Feedback sanitizer** — strips AI deliberation language and em/en dashes from all student-facing feedback
+- **Feedback sanitizer** — strips AI deliberation language, inline point tallies, scoring verdicts, and em/en dashes from all student-facing feedback
+- **MC double-read verification** — multiple choice questions scored zero are re-read in a focused verification pass to catch letter-reading errors
+- **Crossed-out answer handling** — grading prompt instructs Claude to ignore crossed-out/slashed answers and only score cleanly marked responses
 - **Shared scoring module** — `scoring.py` is the single source of truth for sub-part consolidation, feedback sanitization, score recalculation, and letter grade assignment; used by both production and audit pipelines
 - **Score recalculation** — sub-part consolidation and normalization run in Python after API response
 - **JSON retry** — automatic retry on malformed Claude responses with persistent error logging
@@ -51,6 +55,16 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 - **Blind validation analysis** — independent testing agent analyzes audit data with no knowledge of pipeline internals; stratifies metrics by rubric version
 - **Presentation bundle** — `generate_presentation_bundle.py` merges title page, TOC, pipeline overview, per-version analytics, validation reports, and review checklist into a single PDF
 - **Review checklist** — `generate_review_checklist.py` produces a review workflow PDF with flagged exams and high-disagreement questions
+
+### Rubric Enhancement
+
+- **Rubric builder** — interactive refinement tool that enhances your uploaded rubric with structured partial credit tiers, expected answers, common error patterns, and scoring criteria
+- **Multi-version support** — upload rubrics for different exam versions (A, B, ...); enhanced rubrics can be mapped across versions
+
+### Email Distribution
+
+- **Per-student PDF reports** — generate individual score reports with question breakdown and feedback
+- **Gmail OAuth2** — send reports directly to students via authenticated Gmail; supports multiple sender accounts
 
 ### Privacy
 
