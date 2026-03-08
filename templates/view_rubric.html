@@ -4,11 +4,17 @@
 <h2>Rubric — Version {{ rubric.version }}</h2>
 <p class="text-muted">Created: {{ rubric.created_at }}</p>
 
+{% if rubric.rubric_file_path %}
+<div class="mb-3">
+  <iframe src="/setup/rubric-pdf/{{ rubric.version }}" width="100%" height="800" style="border:1px solid #444; border-radius:6px;"></iframe>
+</div>
+{% else %}
 <div class="card border-0 shadow-sm mb-3">
   <div class="card-body">
     <pre class="mb-0" style="white-space: pre-wrap;">{{ rubric.content }}</pre>
   </div>
 </div>
+{% endif %}
 
 <a href="/setup" class="btn btn-outline-secondary">← Back to Rubrics</a>
 {% endblock %}

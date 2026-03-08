@@ -27,12 +27,49 @@ _DELIBERATION = re.compile(
     r'\b(wait|actually|hmm|let me re-?(?:read|check|count|examine)|'
     r'on second thought|re-?reading|I (?:think|miscounted|need to)|'
     r'looking (?:again|more carefully)|hold on|scratch that|'
-    r'no,|correction:|upon (?:closer|further))\b',
+    r'no,|correction:|correcting:|upon (?:closer|further)|'
+    r'total\s*[:=]\s*\d|awarding\s+\d|this\s+earns|'
+    r'the (?:header|earned) score.*(?:incorrect|wrong)|note:\s*the)\b',
+    re.IGNORECASE,
+)
+
+# Scoring-language sentences — pure grading verdicts with no substantive feedback.
+# "Full credit." / "Full credit awarded for part (b)." / "Full credit for part (a)."
+# Must NOT match substantive uses like "Full credit requires both forms."
+_SCORING_SENTENCE = re.compile(
+    r'^(?:Full|Partial|No)\s+credit'
+    r'(?:\s+(?:awarded|given|earned))?'
+    r'(?:\s+for\s+(?:part\s+)?\(?\w\)?)?'
+    r'\s*\.?$'
+    r'|^(?:Both|All)\s+parts?\s+(?:earn|receive|get)\s+(?:full|partial)\s+credit\s*\.?$',
     re.IGNORECASE,
 )
 
 # Sub-part suffix pattern — matches Q3a, Q3(a), Q3 (a), Q3-a, Q3_a, Q3.a
 _SUB_PART_SUFFIX = re.compile(r'[\s\-_\.]?\(?[a-zA-Z]\)?$')
+
+# Inline point annotations — stripped from feedback after scores are finalized.
+# Matches: (1 pt), (1.5/1.5), (0/2), - 1.5 pts, earns 1 pt, full credit: 1.5 pts
+_POINTS_INLINE = re.compile(
+    r'\s*\(\d+\.?\d*\s*/\s*\d+\.?\d*\s*(?:pts?|points?)?\)'    # (1.5/1.5), (0/2), (1.5/1.5 pts)
+    r'|\s*\(\d+\.?\d*\s+(?:pts?|points?)\s*(?:not\s+earned)?\)' # (1 pt), (0.5 pt not earned)
+    r'|\s*[-]\s+\d+\.?\d*\s*(?:/\s*\d+\.?\d*\s*)?(?:pts?|points?)\.?'  # - 1.5 pts
+    r'|\b[Aa]ward\s+\d+\.?\d*\s*/\s*\d+\.?\d*'                  # Award 0.75/1.5
+    r'|\bearns?\s+(?:full\s+)?(?:credit\s+)?\(?\d+\.?\d*(?:\s*/\s*\d+\.?\d*)?\s*(?:pts?|points?)?\)?'
+    r'|\bfull\s+credit\s*[:]\s*\d+\.?\d*\s*(?:pts?|points?)?'
+    r'|\s*\(\d+\.?\d*\s+points?\s+possible\)'                     # (5 points possible)
+    r'|\b\d*\.?\d+\s+out\s+of\s+\d+\.?\d*\s*(?:pts?|points?)?\.?' # 1 out of 2 points.
+    r'|\bout\s+of\s+\d+\.?\d*\s*(?:pts?|points?)?\.?'             # out of 2 points.
+    r'|\bScore\s*:\s*\d+\.?\d*\s*/\s*\d+\.?\d*\.?'               # Score: 0/3.33.
+    r'|,?\s*earning\s+(?:full|partial)\s+credit\b[^.]*'           # , earning full credit despite...
+    r'|,?\s*earning\s+\d+\.?\d*\s*(?:pts?|points?)\.?'            # , earning 1 pt.
+    r'|,?\s*earning\s+(?:full|partial)\s+\d+\.?\d*\s*(?:pts?|points?)\.?'  # , earning full 2 points.
+    r'|\b[Oo]ne\s+point\s+awarded\.?'                             # One point awarded.
+    r'|,?\s*warranting\s+\d+\.?\d*\s*(?:pts?|points?)\b[^.]*'     # , warranting 2 pts per the rubric.
+    r'|\bThis\s+yields\s+\d+\.?\d*\s*(?:pts?|points?)\b[^.]*'     # This yields 1 point for part (b)...
+    r'|\b[Cc]redit\s+awarded\s+at\s+the\s+\d+\S*\s*(?:tier\s+)?(?:for\s+)?'  # Credit awarded at the 1-pt tier for
+    , re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -48,18 +85,34 @@ def letter_grade(pct: float) -> str:
     return "F"
 
 
+def strip_point_annotations(text: str) -> str:
+    """Remove inline point tallies from feedback so stale numbers can't contradict scores."""
+    if not text:
+        return text
+    cleaned = _POINTS_INLINE.sub('', text)
+    # Collapse double spaces, orphaned punctuation artifacts
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+    cleaned = re.sub(r'\s*-\s*\.', '.', cleaned)
+    cleaned = re.sub(r'\.\s*\.', '.', cleaned)       # ". ." -> "."
+    cleaned = re.sub(r';\s*\.', '.', cleaned)         # "; ." -> "."
+    return cleaned.strip()
+
+
 def clean_feedback(text: str) -> str:
-    """Strip deliberation language and normalize dashes in feedback text."""
+    """Strip deliberation language, point annotations, and normalize dashes in feedback text."""
     if not text:
         return text
     # Replace em/en dashes with regular dashes (AI tell)
     text = text.replace("\u2014", "-").replace("\u2013", "-")
     # Split on sentence boundaries, keep only clean sentences
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    clean = [s for s in sentences if not _DELIBERATION.search(s)]
+    clean = [s for s in sentences
+             if not _DELIBERATION.search(s) and not _SCORING_SENTENCE.match(s.strip())]
     result = " ".join(clean).strip()
     # If everything was stripped, keep last sentence as fallback (the final answer)
-    return result if result else sentences[-1].strip()
+    result = result if result else sentences[-1].strip()
+    # Strip inline point annotations (stale tallies from model deliberation)
+    return strip_point_annotations(result)
 
 
 # ---------------------------------------------------------------------------

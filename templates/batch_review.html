@@ -63,7 +63,10 @@
 </div>
 {% endif %}
 
-<form method="POST" action="/upload-batch/confirm/{{ review_id }}" id="confirmForm">
+<form method="POST" action="/upload-batch/confirm/{{ review_id }}" id="confirmForm"
+      {% if roster_count and roster_count > 0 %}
+      onsubmit="if (!rosterMatched) { return confirm('WARNING: Names have not been matched against the roster. Names and SIDs may be incorrect.\n\nSave anyway?'); }"
+      {% endif %}>
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body p-0">
       <table class="table table-hover mb-0 align-middle">
@@ -194,6 +197,7 @@ let activeExam  = 0;
 let activePage  = 0;
 let totalPages  = 0;
 let modalInst   = null;
+let rosterMatched = false;
 
 function openReview(examIndex, pageCount, examNum) {
   activeExam = examIndex;
@@ -268,11 +272,38 @@ document.querySelectorAll('[name^="name_"],[name^="sid_"]').forEach(function(el)
       document.getElementById('ocr-counts').textContent = data.done + ' / ' + data.total;
 
       if (data.exams) {
+        var tierColor = {high: 'success', medium: 'warning', low: 'danger'};
         data.exams.forEach(function(exam, i) {
           var nameEl = document.querySelector('[name="name_' + i + '"]');
           var sidEl  = document.querySelector('[name="sid_'  + i + '"]');
           if (nameEl && !nameEl.dataset.userEdited && exam.name) nameEl.value = exam.name;
           if (sidEl  && !sidEl.dataset.userEdited  && exam.sid)  sidEl.value  = exam.sid;
+          // Show roster match badge and highlight low-confidence rows
+          var row = document.querySelectorAll('#examTbody tr')[i];
+          if (exam.roster_score > 0) {
+            var badge = document.getElementById('conf-' + i);
+            if (badge) {
+              var pct = Math.round(exam.roster_score * 100);
+              var tier = pct >= 85 ? 'high' : (pct >= 60 ? 'medium' : 'low');
+              badge.className = 'badge bg-' + (tierColor[tier] || 'secondary');
+              badge.textContent = pct + '%';
+              badge.title = tier.charAt(0).toUpperCase() + tier.slice(1) + ' confidence';
+            }
+            if (row) {
+              if (exam.roster_score < 0.60) {
+                row.style.background = 'rgba(220, 53, 69, 0.1)';
+                row.style.borderLeft = '3px solid #dc3545';
+              } else {
+                // Clear red bar once matched
+                row.style.removeProperty('background');
+                row.style.removeProperty('border-left');
+              }
+            }
+          } else if (row && !exam.name) {
+            // No match at all and no name — highlight for manual entry
+            row.style.background = 'rgba(220, 53, 69, 0.1)';
+            row.style.borderLeft = '3px solid #dc3545';
+          }
         });
       }
 
@@ -284,10 +315,24 @@ document.querySelectorAll('[name^="name_"],[name^="sid_"]').forEach(function(el)
         if (spinner) spinner.classList.add('d-none');
         if (abortBtn) abortBtn.classList.add('d-none');
         document.getElementById('ocr-bar').classList.remove('progress-bar-animated', 'progress-bar-striped');
-        document.getElementById('ocr-label').textContent = data.aborted
-          ? 'Extraction stopped — fill remaining names manually.'
-          : 'Name extraction complete ✓';
-        if (!data.aborted) setTimeout(function() { banner.classList.add('d-none'); }, 3000);
+        if (data.aborted) {
+          document.getElementById('ocr-label').textContent = 'Extraction stopped — fill remaining names manually.';
+        } else if (data.auto_matched) {
+          document.getElementById('ocr-label').textContent = 'Name extraction + roster matching complete ✓';
+          rosterMatched = true;
+          var matchBtn = document.getElementById('matchRosterBtn');
+          if (matchBtn) matchBtn.textContent = 'Re-match against Roster';
+          var matched = data.exams ? data.exams.filter(function(e) { return e.roster_score >= 0.60; }).length : 0;
+          var total = data.exams ? data.exams.length : 0;
+          var high = data.exams ? data.exams.filter(function(e) { return e.roster_score >= 0.85; }).length : 0;
+          var summary = document.getElementById('matchSummary');
+          var low = total - matched;
+          if (summary) summary.textContent = total + ' matched (' + high + ' at ≥85% confidence' + (low > 0 ? ', ' + low + ' below 60% -- review highlighted' : '') + ')';
+          setTimeout(function() { banner.classList.add('d-none'); }, 4000);
+        } else {
+          document.getElementById('ocr-label').textContent = 'Name extraction complete ✓';
+          setTimeout(function() { banner.classList.add('d-none'); }, 3000);
+        }
       }
     })
     .catch(function() { setTimeout(pollOcr, 3000); });
@@ -337,6 +382,14 @@ function matchRoster() {
           badge.title = `${m.tier.charAt(0).toUpperCase() + m.tier.slice(1)} confidence`;
         }
         if (m.score >= 0.85) high++;
+        // Highlight low-confidence rows
+        if (m.score < 0.60) {
+          const row = document.querySelectorAll('#examTbody tr')[m.exam_index];
+          if (row) {
+            row.style.background = 'rgba(220, 53, 69, 0.1)';
+            row.style.borderLeft = '3px solid #dc3545';
+          }
+        }
       });
       // Highlight duplicate matches
       const dups = data.duplicates || {};
@@ -361,8 +414,10 @@ function matchRoster() {
       }
       const summary = document.getElementById('matchSummary');
       if (summary) {
-        summary.textContent = `${high} of ${data.results.length} matched at ≥85% confidence`;
+        const low = data.results.filter(r => r.score < 0.60).length;
+        summary.textContent = `${data.results.length} matched (${high} at ≥85% confidence` + (low > 0 ? `, ${low} below 60% -- review highlighted` : '') + ')';
       }
+      rosterMatched = true;
       btn.disabled = false;
       btn.textContent = 'Re-match against Roster';
     })

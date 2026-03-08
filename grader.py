@@ -516,12 +516,16 @@ def read_name_sid_from_cover(file_path: str) -> dict:
 
 
 def _run_ocr_background(review_id: str, review_path: Path):
-    """Run cover-page OCR for every exam in a review session on a background thread."""
+    """Run cover-page OCR for every exam in a review session on a background thread.
+    After OCR completes, auto-matches against the roster if one is loaded."""
     try:
         data  = json.loads(review_path.read_text())
         total = len(data["exams"])
         with _ocr_jobs_lock:
-            _ocr_jobs[review_id] = {"total": total, "done": 0, "running": True, "aborted": False}
+            _ocr_jobs[review_id] = {
+                "total": total, "done": 0, "running": True, "aborted": False,
+                "auto_matched": False,
+            }
         for i, exam in enumerate(data["exams"]):
             with _ocr_jobs_lock:
                 if _ocr_jobs[review_id].get("aborted"):
@@ -534,6 +538,40 @@ def _run_ocr_background(review_id: str, review_path: Path):
             tmp.replace(review_path)
             with _ocr_jobs_lock:
                 _ocr_jobs[review_id]["done"] = i + 1
+
+        # --- Auto-match against roster after OCR ---
+        with _ocr_jobs_lock:
+            aborted = _ocr_jobs.get(review_id, {}).get("aborted", False)
+        if not aborted:
+            try:
+                with app.app_context():
+                    db = get_db()
+                    roster_count = db.execute("SELECT COUNT(*) FROM roster").fetchone()[0]
+                    if roster_count > 0:
+                        rows = db.execute("SELECT * FROM roster").fetchall()
+                        entries = [dict(r) for r in rows]
+                        # Re-read review data (OCR may have updated it)
+                        data = json.loads(review_path.read_text())
+                        matched = 0
+                        for exam in data["exams"]:
+                            best, score = match_against_roster(
+                                exam.get("name", ""), exam.get("sid", ""), entries
+                            )
+                            if best and score >= 0.60:
+                                exam["name"] = f"{best['first_name']} {best['last_name']}"
+                                exam["sid"] = best["sid"] or ""
+                                exam["roster_score"] = round(score, 3)
+                                matched += 1
+                        tmp = review_path.with_suffix(".tmp")
+                        tmp.write_text(json.dumps(data))
+                        tmp.replace(review_path)
+                        with _ocr_jobs_lock:
+                            _ocr_jobs[review_id]["auto_matched"] = True
+                        _log.info("[ROSTER] Auto-matched %d/%d exams for review %s",
+                                  matched, len(data["exams"]), review_id)
+            except Exception as e:
+                _log.warning("[ROSTER] Auto-match failed for review %s: %s", review_id, e)
+
     except Exception as e:
         _log.error("OCR failed for review %s: %s", review_id, e)
         with _ocr_jobs_lock:
@@ -666,7 +704,7 @@ def setup():
         draft_info = get_draft_info()
     # Find the primary enhanced version (has enhanced_rubric without mapped_from)
     primary_enhanced = None
-    for br in builder_rubrics:
+    for br in (builder_rubrics if builder_rubrics else rubrics):
         if br["enhanced_rubric"]:
             try:
                 edata = json.loads(br["enhanced_rubric"])
@@ -696,7 +734,6 @@ def view_rubric(version):
         flash(f"No rubric found for Version {version}.", "warning")
         return redirect(url_for("setup"))
     return render_template("view_rubric.html", rubric=rubric)
-
 
 
 # ---------------------------------------------------------------------------
@@ -844,17 +881,29 @@ def _grade_exam(exam_row, rubric) -> dict:
             "type": "image",
             "source": {"type": "base64", "media_type": "image/png", "data": b64},
         })
-        exam_blocks.append({"type": "text", "text": f"[Page {page_num + 1}]"})
+        exam_blocks.append({"type": "text", "text": f"[Page {page_num}]"})
 
     # --- Enhanced rubric (partial credit guide) if available ---
     enhanced_blocks = []
-    if _HAS_BUILDER and rubric.get("enhanced_rubric"):
+    if _HAS_BUILDER and rubric["enhanced_rubric"]:
         try:
             enhanced = json.loads(rubric["enhanced_rubric"])
             enhanced_text = format_for_grading_prompt(enhanced)
             enhanced_blocks = [{"type": "text", "text": enhanced_text}]
         except (json.JSONDecodeError, TypeError):
             pass
+
+    # Version-correct rubric text for refinement/contradiction sub-calls.
+    # rubric["content"] may contain the primary version's text (wrong Qs for mapped versions).
+    # The enhanced rubric text has the correct question numbers for this version.
+    if _HAS_BUILDER and rubric["enhanced_rubric"]:
+        try:
+            _enhanced_for_text = json.loads(rubric["enhanced_rubric"])
+            rubric_text_for_subcalls = format_for_grading_prompt(_enhanced_for_text)
+        except (json.JSONDecodeError, TypeError):
+            rubric_text_for_subcalls = rubric["content"] or "(rubric not available)"
+    else:
+        rubric_text_for_subcalls = rubric["content"] or "(rubric not available)"
 
     content = rubric_blocks + enhanced_blocks + [
         {"type": "text", "text": "--- EXAM ANSWER PAGES ---"},
@@ -894,6 +943,7 @@ MULTIPLE CHOICE instructions (critical):
 - Do NOT award partial credit on multiple choice.
 - If no letter is clearly marked, award 0 and note "no answer marked" in feedback.
 - If two letters appear marked, use the one with the clearest, most deliberate marking.
+- CROSSED-OUT ANSWERS: Students often cross out wrong answers with slashes (/) or Xs through the letter or circle. A crossed-out/slashed answer is REJECTED by the student — ignore it completely. Only score the answer that is cleanly circled without cross-out marks. If ALL circled answers are crossed out, treat as "no answer marked" (0 pts).
 
 QUESTION CONSOLIDATION (critical):
 - Each question must appear as a SINGLE entry in the scores array, even if the rubric breaks it into sub-parts (a), (b), (c).
@@ -902,13 +952,16 @@ QUESTION CONSOLIDATION (critical):
 - Include feedback for all sub-parts combined in the single feedback string.
 
 FEEDBACK TONE (critical):
-- Write feedback as a professor would on a graded exam — definitive, concise, and authoritative.
+- The feedback field is shown DIRECTLY TO STUDENTS. It must read as a final verdict, not a grading worksheet.
+- Write as a professor would on a graded exam — definitive, concise, and authoritative.
 - State what is correct or incorrect directly. Never hedge, self-correct, or show reasoning process.
-- NEVER use phrases like "wait", "actually", "let me reconsider", "on second thought", "hmm", or similar deliberation language.
+- NEVER include score tallies, recalculations, point breakdowns, or corrections in feedback. The scores are computed separately — feedback explains WHY, not HOW MANY.
+- NEVER use phrases like "wait", "actually", "let me reconsider", "on second thought", "correcting", "awarding X pts", "total = X", "this earns", or similar deliberation/arithmetic language.
+- For multi-part questions, address each part's correctness without re-deriving the total.
 - If you are uncertain about a reading, make your best judgment and commit to it. Do not narrate your uncertainty.
 - Good: "Correct application of the Coase theorem."
-- Good: "Incorrect — confused fixed and variable costs in the calculation."
-- Bad: "Wait, actually I think the student might have meant... let me look again..."
+- Good: "Part (a): Correctly identifies the fairness effect. Part (b): Movement along the curve is correct; shift identified with valid non-price factor."
+- Bad: "Part (a) earns 1 pt. Part (b) earns 1.5 pts. Total = 2.5. Correcting: actually awarding 3 pts..."
 
 HANDWRITING UNCERTAINTY (required for every question):
 - You MUST include "handwriting_flag" (true or false) in EVERY question object.
@@ -918,16 +971,11 @@ HANDWRITING UNCERTAINTY (required for every question):
 - Set false if: the handwriting is clearly legible with no ambiguity.
 - Omitting this field is an error. Every question MUST have it.
 
-PAGE LOCATION (required for every question):
-- You MUST include "page" (integer) in EVERY question object.
-- Report the [Page N] number where the question's answer appears.
-- If a question spans multiple pages, report the page where the answer begins.
-
 - Respond ONLY with valid JSON in exactly this format:
 {{
   "anon_id": "{exam_row["anon_id"]}",
   "scores": [
-    {{"question": "Q1", "max_points": <n>, "earned_points": <n>, "feedback": "<specific feedback>", "handwriting_flag": false, "page": <N>}}
+    {{"question": "Q1", "max_points": <n>, "earned_points": <n>, "feedback": "<specific feedback>", "handwriting_flag": false}}
   ],
   "total_earned": <n>,
   "total_possible": <n>,
@@ -1018,7 +1066,7 @@ PAGE LOCATION (required for every question):
             f"Current feedback: \"{q.get('feedback', '')}\""
             for q in vague_questions
         )
-        rubric_text = rubric["content"] if rubric["content"] else "(rubric not available as text)"
+        rubric_text = rubric_text_for_subcalls
         refine_prompt = (
             f"You graded an exam and gave feedback that is too vague to help the student.\n\n"
             f"RUBRIC:\n{rubric_text}\n\n"
@@ -1052,9 +1100,10 @@ PAGE LOCATION (required for every question):
         except Exception as e:
             _log.warning("[FEEDBACK] Refinement failed for %s: %s", exam_row["anon_id"], e)
 
-    # --- Score/feedback contradiction detection & resolution ---
-    # Catches cases where feedback correctly identifies an error but the numeric
-    # score doesn't reflect it (or vice versa). Resolved via text-only API call.
+    # --- Score/feedback semantic contradiction detection & resolution ---
+    # Catches cases where feedback language contradicts the score direction.
+    # Point tallies are stripped from feedback by clean_feedback() so we only
+    # need to detect semantic mismatches (e.g. "incorrect" with full marks).
     contradiction_resolved = []
     contradictions = []
     if data.get("scores"):
@@ -1075,7 +1124,7 @@ PAGE LOCATION (required for every question):
     if contradictions:
         _log.info("[CONTRADICTION] %s has %d question(s) with score/feedback contradictions",
                   exam_row["anon_id"], len(contradictions))
-        rubric_text = rubric["content"] if rubric["content"] else "(rubric not available as text)"
+        rubric_text = rubric_text_for_subcalls
         c_details = "\n".join(
             f"- {c['question']}: earned {c['earned_points']}/{c['max_points']}. "
             f"Feedback: \"{c.get('feedback', '')}\""
@@ -1124,6 +1173,73 @@ PAGE LOCATION (required for every question):
         except Exception as e:
             _log.warning("[CONTRADICTION] Resolution failed for %s: %s", exam_row["anon_id"], e)
 
+    # --- MC double-read verification ---
+    # MC questions scored 0 are high-risk for letter-reading errors (3.33 pt swing).
+    # Send a focused verification call for each MC zero to confirm the circled letter.
+    _mc_letter_re = re.compile(
+        r'\b(?:circled|selected|marked|chose|answered?)\s+([A-D])\b', re.IGNORECASE
+    )
+    mc_verified = []
+    if data.get("scores"):
+        for s in data["scores"]:
+            earned = float(s.get("earned_points", 0))
+            mx = float(s.get("max_points", 0))
+            fb = s.get("feedback", "")
+            page = s.get("page")
+            # Detect MC zeros: all-or-nothing score, 0 earned, short feedback with letter ref
+            if earned > 0 or mx <= 0 or page is None:
+                continue
+            letter_match = _mc_letter_re.search(fb)
+            if not letter_match:
+                continue
+            original_letter = letter_match.group(1).upper()
+            # Send just the relevant page for a focused letter-read
+            try:
+                verify_img = _render_page_png(exam_row["file_path"], page - 1)
+                verify_img_obj = Image.open(io.BytesIO(verify_img))
+                verify_img_obj = ImageEnhance.Contrast(verify_img_obj).enhance(2.0)
+                vbuf = io.BytesIO()
+                verify_img_obj.save(vbuf, format="PNG")
+                vb64 = base64.standard_b64encode(vbuf.getvalue()).decode()
+
+                verify_resp = client.messages.create(
+                    model=CLAUDE_MODEL,
+                    max_tokens=256,
+                    temperature=0.0,
+                    messages=[{"role": "user", "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": vb64}},
+                        {"type": "text", "text": (
+                            f"Look at {s['question']} on this exam page. "
+                            f"What letter is circled or marked as the student's answer? "
+                            f"If any answer is crossed out with a slash or X, IGNORE it — "
+                            f"only report the cleanly circled answer. "
+                            f"Reply with ONLY the letter (A, B, C, or D) or UNCLEAR if you cannot tell."
+                        )},
+                    ]}],
+                )
+                verify_text = ""
+                for block in verify_resp.content:
+                    if block.type == "text":
+                        verify_text = block.text.strip().upper()
+                        break
+                verified_letter = verify_text if verify_text in ("A", "B", "C", "D", "UNCLEAR") else "UNCLEAR"
+
+                if verified_letter == "UNCLEAR" or verified_letter != original_letter:
+                    _log.info("[MC-VERIFY] %s %s: original read '%s', verification read '%s' - flagging",
+                              exam_row["anon_id"], s["question"], original_letter, verified_letter)
+                    mc_verified.append({
+                        "question": s["question"],
+                        "original_letter": original_letter,
+                        "verified_letter": verified_letter,
+                        "page": page,
+                    })
+                else:
+                    _log.info("[MC-VERIFY] %s %s: confirmed '%s'",
+                              exam_row["anon_id"], s["question"], original_letter)
+            except Exception as e:
+                _log.warning("[MC-VERIFY] %s %s: verification failed - %s",
+                             exam_row["anon_id"], s["question"], e)
+
     # --- Collect review flags ---
     # Handwriting flags from the model + contradiction-resolved questions for professor review.
     flags = []
@@ -1141,6 +1257,14 @@ PAGE LOCATION (required for every question):
         # Look up page from scores list for contradiction flags
         q_page = next((s.get("page") for s in data.get("scores", []) if s["question"] == q), None)
         flags.append({"question": q, "reason": "contradiction_resolved", "page": q_page})
+    for mc in mc_verified:
+        flags.append({
+            "question": mc["question"],
+            "reason": "mc_letter_mismatch",
+            "page": mc["page"],
+            "original_letter": mc["original_letter"],
+            "verified_letter": mc["verified_letter"],
+        })
     if flags:
         data["review_flags"] = flags
 
@@ -1431,7 +1555,7 @@ def clear_grade(anon_id):
     )
     db.commit()
     flash(f"Grade cleared for {anon_id}.", "success")
-    return redirect(url_for("exam_detail", anon_id=anon_id))
+    return redirect(request.referrer or url_for("exams"))
 
 
 @app.route("/clear-all-grades", methods=["POST"])
@@ -1767,7 +1891,8 @@ def ocr_status(review_id):
     if review_path.exists():
         try:
             data  = json.loads(review_path.read_text())
-            exams = [{"name": e.get("name", ""), "sid": e.get("sid", "")}
+            exams = [{"name": e.get("name", ""), "sid": e.get("sid", ""),
+                      "roster_score": e.get("roster_score", 0)}
                      for e in data["exams"]]
         except Exception:
             pass
@@ -2656,6 +2781,7 @@ def _save_enhanced_to_db(sid: str) -> tuple:
 
     version = enhanced["version"]
     db = get_db()
+
     db.execute(
         "UPDATE rubrics SET enhanced_rubric=? WHERE version=? AND id = "
         "(SELECT MAX(id) FROM rubrics WHERE version=?)",
