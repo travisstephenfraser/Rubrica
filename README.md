@@ -1,6 +1,6 @@
-# ✒ Rubrica
+# Rubrica
 
-A privacy-first, locally-run web app that grades handwritten student exams using Claude's vision AI. Student names and SIDs are extracted entirely on-device using a local Ollama vision model — they never leave your machine at any point.
+A privacy-first, locally-run web app that grades handwritten student exams using Claude's vision AI. Student names and SIDs are extracted entirely on-device using a local Ollama vision model -- they never leave your machine.
 
 Built while serving as a Graduate Student Instructor for Microeconomics at UC Berkeley Haas.
 
@@ -8,15 +8,16 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 
 ## How It Works
 
-1. **Upload a rubric** — PDF or DOCX per exam version; sent natively to Claude to preserve tables and formatting
-2. **Upload a roster** *(optional)* — CSV of student names and SIDs for fuzzy matching during name assignment
-3. **Upload exams** — up to 3 batch PDFs at once; the app splits all of them by page count and merges into one review session
-4. **Assign names** — a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors; extraction runs in the background with live progress and an abort button
-5. **Enhance rubric** *(optional)* — the built-in rubric builder refines your rubric with structured partial credit tiers, common error patterns, and expected answers to improve grading consistency
-6. **Grade** — Claude Sonnet reads each answer page (with 2x contrast enhancement) and scores against the rubric using only an anonymous ID; boundary scores are automatically re-graded in a second pass; vague feedback is refined to cite specific rubric criteria
-7. **Review & adjust** — inline score editing per question, per-student printable reports, summary and detailed CSV exports; all grades mapped back to names locally
-8. **Analyze** — grade distribution histogram, letter grade breakdown, per-question difficulty charts with version filtering
-9. **Audit** *(optional)* — re-grade a sample with Gemini 3.1 Pro as an independent reference scorer; generate a PDF validation report with ETS benchmark comparisons
+1. **Upload a rubric** -- PDF or DOCX per exam version; sent natively to Claude to preserve tables and formatting
+2. **Enhance the rubric** *(optional)* -- a built-in rubric builder refines your rubric with structured partial credit tiers and common error patterns, improving grading consistency
+3. **Upload a roster** *(optional)* -- CSV of student names and SIDs for fuzzy matching during name assignment
+4. **Upload exams** -- up to 3 batch PDFs at once; split by page count and merged into one review session
+5. **Assign names** -- a local Ollama vision model reads each cover page on-device to pre-fill student name and SID; fuzzy roster matching corrects OCR errors; runs in the background with live progress and abort
+6. **Grade** -- Claude Sonnet reads each answer page (2x contrast enhancement) and scores against the rubric using only an anonymous ID; boundary scores are automatically re-graded; vague feedback is refined to cite specific rubric criteria
+7. **Review and adjust** -- inline score editing per question, per-student printable reports with exam scans, summary and detailed CSV exports; all grades mapped back to names locally
+8. **Analyze** -- grade distribution histogram, letter grade breakdown, per-question difficulty charts with version filtering
+9. **Audit** *(optional)* -- re-grade a sample with an independent cross-family model; generate a PDF validation report with ETS benchmark comparisons
+10. **Distribute** *(optional)* -- email per-student PDF reports via Gmail OAuth2
 
 ---
 
@@ -24,75 +25,75 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 
 ### Upload and Review
 
-- **Multi-batch upload** — up to 3 batch PDFs at once; split by page count and merged into one review session
-- **Roster upload** — CSV import of student names and SIDs for fuzzy matching during name assignment
-- **Cover page vision** — local Ollama vision model auto-extracts names and SIDs in the background; abortable with live progress
-- **Cover page consistency check** — perceptual hash flags exams whose cover page differs from the majority
-- **Roster fuzzy matching** — local name/SID matching with character confusion corrections (O→0, l→1, etc.)
-- **Auto roster matching** — after OCR completes, exams are automatically matched against the uploaded roster
-- **Scan modal** — page-by-page exam viewer for verifying all pages are attached before confirming
-- **Persistent review tab** — nav tab appears whenever an unsaved review session exists; survives page navigation and restarts
-- **Launch Ollama button** — one-click startup from the upload page with GPU-enable reminder
+- **Multi-batch upload** -- up to 3 batch PDFs at once; split by page count and merged into one review session
+- **Roster upload** -- CSV import of student names and SIDs for fuzzy matching during name assignment
+- **Cover page vision** -- local Ollama vision model auto-extracts names and SIDs in the background; abortable with live progress
+- **Cover page consistency check** -- perceptual hash flags exams whose cover page differs from the majority
+- **Roster fuzzy matching** -- local name/SID matching with character confusion corrections (O to 0, l to 1, etc.)
+- **Auto roster matching** -- after OCR completes, exams are automatically matched against the uploaded roster
+- **Scan modal** -- page-by-page exam viewer with keyboard navigation for verifying pages before confirming
+- **Persistent review tab** -- nav tab appears whenever an unsaved review session exists; survives page navigation and restarts
+- **Launch Ollama button** -- one-click startup from the upload page with GPU-enable reminder
 
 ### Grading Accuracy
 
-- **Boundary re-grading** — scores within +/-1.5% of letter grade thresholds (90/80/70/60) trigger a second independent pass; disagreements are averaged with full audit trail
-- **Feedback specificity enforcement** — vague feedback ("Good work", "Incorrect", <8 words) is refined via a follow-up API call requiring rubric-anchored justification
-- **Faint pencil handling** — 2x contrast enhancement on exam images before grading
-- **Deterministic scoring** — temperature 0.0 on all API calls
-- **Feedback sanitizer** — strips AI deliberation language, inline point tallies, scoring verdicts, and em/en dashes from all student-facing feedback
-- **MC double-read verification** — multiple choice questions scored zero are re-read in a focused verification pass to catch letter-reading errors
-- **Crossed-out answer handling** — grading prompt instructs Claude to ignore crossed-out/slashed answers and only score cleanly marked responses
-- **Shared scoring module** — `scoring.py` is the single source of truth for sub-part consolidation, feedback sanitization, score recalculation, and letter grade assignment; used by both production and audit pipelines
-- **Score recalculation** — sub-part consolidation and normalization run in Python after API response
-- **JSON retry** — automatic retry on malformed Claude responses with persistent error logging
-
-### Grading Audit
-
-- **Independent re-grading** — `audit_grader.py` re-grades stratified samples using Gemini 3.1 Pro (cross-family) or Claude Opus 4.6 (within-family) as reference scorers
-- **ETS benchmark metrics** — exact match, adjacent agreement, MAE, bias, and letter grade agreement
-- **PDF validation report** — `generate_audit_report.py` produces a faculty-ready report with methodology, benchmarks, sample size recommendations, and references
-- **Blind validation analysis** — independent testing agent analyzes audit data with no knowledge of pipeline internals; stratifies metrics by rubric version
-- **Presentation bundle** — `generate_presentation_bundle.py` merges title page, TOC, pipeline overview, per-version analytics, validation reports, and review checklist into a single PDF
-- **Review checklist** — `generate_review_checklist.py` produces a review workflow PDF with flagged exams and high-disagreement questions
+- **Boundary re-grading** -- scores within +/-1.5% of letter grade thresholds (90/80/70/60) trigger a second independent pass; disagreements are averaged with full audit trail
+- **Feedback specificity enforcement** -- vague feedback ("Good work", "Incorrect", <8 words) is refined via a follow-up API call requiring rubric-anchored justification
+- **Faint pencil handling** -- 2x contrast enhancement on exam images before grading
+- **Deterministic scoring** -- temperature 0.0 on all grading API calls
+- **Feedback sanitizer** -- strips AI deliberation language, inline point tallies, scoring verdicts, and em/en dashes from all student-facing feedback
+- **MC double-read verification** -- multiple choice questions scored zero are re-read in a focused verification pass to catch letter-reading errors
+- **Crossed-out answer handling** -- grading prompt instructs Claude to ignore crossed-out work and only score cleanly marked responses
+- **Shared scoring module** -- `scoring.py` is the single source of truth for sub-part consolidation, feedback sanitization, score recalculation, and letter grade assignment; used by both production and audit pipelines
+- **No intermediate rounding** -- all per-question math stays full-precision; round only at the final total
+- **JSON retry** -- automatic retry on malformed Claude responses with persistent error logging
 
 ### Rubric Enhancement
 
-- **Rubric builder** — interactive refinement tool that enhances your uploaded rubric with structured partial credit tiers, expected answers, common error patterns, and scoring criteria
-- **Multi-version support** — upload rubrics for different exam versions (A, B, ...); enhanced rubrics can be mapped across versions
+- **Rubric builder** -- refines uploaded rubrics with structured partial credit tiers, expected answers, and common error patterns; learns from grading feedback over time to improve tier accuracy
+- **Multi-version support** -- enhanced rubrics can be mapped across exam versions without building separately
+
+### Grading Audit
+
+- **Independent re-grading** -- re-grades stratified samples using a cross-family model as reference scorer
+- **ETS benchmark metrics** -- ICC, QWK, exact match, adjacent agreement, MAE, and bias; stratified by rubric version
+- **Quality dashboard** -- audit run history with cumulative metrics and health suggestions
+- **PDF validation report** -- faculty-ready document with methodology, benchmarks, sample size recommendations, and references
+- **Blind validation analysis** -- independent testing agent analyzes audit data with no knowledge of pipeline internals
 
 ### Email Distribution
 
-- **Per-student PDF reports** — generate individual score reports with question breakdown and feedback
-- **Gmail OAuth2** — send reports directly to students via authenticated Gmail; supports multiple sender accounts
+- **Per-student PDF reports** -- individual score reports with question breakdown and feedback
+- **Gmail OAuth2** -- send reports directly to students via authenticated Gmail
 
 ### Privacy
 
-- **Anonymous grading** — random 8-character IDs replace student names before any API call
-- **Cover page exclusion** — page 0 is never sent to Claude; OCR runs exclusively through local Ollama
-- **Private Mode** — single toggle hides all names, SIDs, and blurs cover pages across every page; designed for screen-sharing
-- **Local-only storage** — all data (database, PDFs, grades) stays on the instructor's machine
+- **Anonymous grading** -- random 8-character IDs replace student names before any API call
+- **Cover page exclusion** -- page 0 is never sent to Claude; OCR runs exclusively through local Ollama
+- **Private Mode** -- single toggle hides all names, SIDs, and blurs cover pages across every page; designed for screen-sharing
+- **Local-only storage** -- all data (database, PDFs, grades) stays on the instructor's machine
+- **Roster matching** -- fuzzy matching runs entirely in Python; no roster data sent to any API
 
 ### Results and Export
 
-- **Inline score adjustment** — edit per-question earned points after grading; saves via AJAX with live preview
-- **Reviewed checkmark** — per-exam toggle to track review progress; persists across sessions with row highlighting
-- **Grade management** — grade, re-grade, or clear grades per-exam or in bulk; Select Ungraded for batch operations
-- **Student reports** — printable per-student report with score card, progress bar, and question breakdown
-- **CSV export** — summary (one row per student) and detailed (one row per question) formats
-- **Analytics** — grade distribution histogram, letter grade donut, per-question difficulty chart with version filtering
+- **Inline score adjustment** -- edit per-question earned points and feedback after grading; saves via AJAX with live preview
+- **Reviewed checkmark** -- per-exam toggle to track review progress; persists across sessions with row highlighting
+- **Grade management** -- grade, re-grade, or clear grades per-exam or in bulk; Select Ungraded for batch operations
+- **Student reports** -- printable per-student report with score card, exam scans, progress bar, and question breakdown
+- **CSV export** -- summary (one row per student) and detailed (one row per question) formats
+- **Analytics** -- grade distribution histogram, letter grade donut, per-question difficulty chart with version filtering
 
 ### Infrastructure
 
-- **Parallel grading** — 5 concurrent workers with WAL-mode SQLite for safe concurrent writes
-- **Live progress** — background grading with a progress bar that persists across page navigation
-- **API resilience** — 5-minute request timeout and 10-second connect timeout; prevents worker deadlock
-- **Rubric versioning** — multiple rubric versions (A, B, ...) for different exam variants
-- **Batch resume** — Grade All skips already-graded exams; no duplicate API calls
-- **Input validation** — session IDs validated on all routes; error messages sanitized
-- **Upload size limit** — 50 MB cap per batch PDF with client-side validation and inline hint
-- **Dark mode** — session-persisted toggle; Bootstrap 5 `data-bs-theme`
-- **Built-in docs** — full system documentation at `/docs`, printable as PDF
+- **Parallel grading** -- 5 concurrent workers with WAL-mode SQLite for safe concurrent writes
+- **Live progress** -- background grading with a progress bar that persists across page navigation
+- **API resilience** -- 5-minute request timeout and 10-second connect timeout; prevents worker deadlock
+- **Rubric versioning** -- multiple rubric versions (A, B, ...) for different exam variants
+- **Batch resume** -- Grade All skips already-graded exams; no duplicate API calls
+- **Input validation** -- session IDs validated on all routes; error messages sanitized
+- **Upload size limit** -- 50 MB cap per batch PDF with client-side validation and inline hint
+- **Dark mode** -- session-persisted toggle; Bootstrap 5 `data-bs-theme`
+- **Built-in docs** -- full system documentation at `/docs`, printable as PDF
 
 ---
 
@@ -102,9 +103,8 @@ Built while serving as a Graduate Student Instructor for Microeconomics at UC Be
 |---|---|
 | Web framework | Flask 3.x |
 | AI grading | `claude-sonnet-4-6` (vision, via Anthropic API) |
-| AI audit | `gemini-3.1-pro-preview` (default cross-family) / `claude-opus-4-6` (fallback) |
 | AI name extraction | `llama3.2-vision` via Ollama (local, on-device) |
-| PDF handling | pypdf, pdfplumber |
+| PDF handling | pypdf, pdfplumber, pypdfium2 |
 | Document parsing | python-docx |
 | Environment | python-dotenv |
 | Database | SQLite (WAL mode, local) |
@@ -138,8 +138,6 @@ OLLAMA_EXE=C:\path\to\ollama.exe   # optional, only if ollama is not in PATH
 Run the app:
 
 ```bash
-# Windows (required for emoji output)
-set PYTHONIOENCODING=utf-8
 python grader.py
 ```
 
@@ -151,29 +149,31 @@ Open `http://localhost:5000` in your browser.
 
 ```
 Rubrica/
-├── grader.py                # Flask app — all routes and business logic
+├── grader.py                # Flask app -- all routes and business logic
 ├── scoring.py               # Shared scoring pipeline (consolidation, sanitization, finalization)
 ├── requirements.txt         # Python dependencies
 ├── build_info.json          # Auto-generated build metadata (commit, branch, date)
-├── data/                    # Local only — excluded from version control
-│   ├── exam_grader.db       # SQLite: name↔ID mappings and grade data
+├── data/                    # Local only -- excluded from version control
+│   ├── exam_grader.db       # SQLite database
 │   ├── uploads/             # Anonymized exam PDFs
 │   ├── rubrics/             # Uploaded rubric files
 │   └── audit_results/       # Audit JSON + validation report PDFs
 └── templates/               # HTML templates (Bootstrap 5)
 ```
 
-> **Audit pipeline (work in progress):** The independent re-grading system, PDF report generation, structural pattern analysis, and insights dashboard are under active development and not yet included in the open-source distribution. The validation results below reflect testing on a single course and exam; broader cross-subject validation is needed before the audit tooling is ready for general use. These modules will be open-sourced once the methodology is sufficiently tested across different subjects, rubric formats, and class sizes.
+> Some modules (audit pipeline, rubric builder, insights dashboard, email distribution, report generators) are under active development and not yet included in the open-source distribution. The core grading pipeline is fully functional without them. These modules will be open-sourced once sufficiently tested across different subjects, rubric formats, and class sizes.
 
 ---
 
 ## Validation and Research
 
-Rubrica's grading pipeline and audit methodology are grounded in established psychometric standards and recent AI grading research. The audit system (`audit_grader.py`) uses Gemini 3.1 Pro as a cross-family reference scorer to validate production grades assigned by Claude Sonnet 4.6, with Claude Opus 4.6 available as a within-family fallback.
+Rubrica's grading pipeline and audit methodology are grounded in established psychometric standards and recent AI grading research. The audit system re-grades stratified random samples using a cross-family model as an independent reference scorer.
 
 ### Audit Protocol
 
-The audit re-grades stratified random samples of exams under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Production grades are snapshotted as `raw_scores` after the shared pipeline but before production-only safeguards (feedback specificity, contradiction resolution, boundary re-grade), so the audit compares raw model output to raw model output per the Williamson et al. (2012) framework. Validation across 30 exams (15 RED, 15 GREEN; 840 scored items) with Gemini 3.1 Pro produced:
+The audit re-grades under identical conditions (same rubric, same anonymized pages, same system prompt, temperature 0.0) and computes inter-rater reliability metrics at the individual question level. Both production and audit pipelines share a single scoring module (`scoring.py`) for sub-part consolidation, feedback sanitization, score recalculation, hard cap enforcement, and letter grade assignment; the only variable is the grading model. Production grades are snapshotted as `raw_scores` after the shared pipeline but before production-only safeguards (feedback specificity, contradiction resolution, boundary re-grade), so the audit compares raw model output to raw model output per the Williamson et al. (2012) framework.
+
+Validation across 30 exams (15 per version; 840 scored items):
 
 | Metric | Result | ETS Threshold |
 |---|---|---|
@@ -181,51 +181,35 @@ The audit re-grades stratified random samples of exams under identical condition
 | Quadratic Weighted Kappa | **0.91** (excellent) | >= 0.70 |
 | Exact score match | **91%** | >= 70% |
 | Within-1-point agreement | **96%** | >= 95% |
-| Letter grade agreement | **80%** (97% adjusted for auditor error) | >= 80% |
 | Mean absolute error | **0.14 pt** per question | < 1.0 pt |
-| Mean bias (Sonnet - Gemini) | **~0.00 pt** (no systematic direction) | Near 0 |
+| Mean bias | **~0.00 pt** | Near 0 |
 
-All per-question metrics are stratified by rubric version, since RED and GREEN exams have different questions and point allocations. An independent blind validation analyst (with no knowledge of pipeline internals) confirmed that the 6 grade mismatches (20%) concentrate at letter grade boundaries and trace to specific root causes: 3 Gemini image-reading errors on multiple-choice items, and 2 answer-key interpretation disputes on expected utility questions where Gemini computed E(U)=16 against a rubric that explicitly states E(U)=14 with worked arithmetic. Accounting for these 5 confirmed auditor errors, adjusted letter grade agreement is 97% (29/30).
-
-The dual-scoring validation model follows the framework recommended by ETS for automated essay scoring systems (Williamson et al., 2012) and mirrors the independent re-scoring methodology used by Gradescope at UC Berkeley (Singh et al., 2017).
+All metrics are stratified by rubric version. The dual-scoring validation model follows the framework recommended by ETS for automated essay scoring systems (Williamson et al., 2012) and mirrors the independent re-scoring methodology used by Gradescope at UC Berkeley (Singh et al., 2017).
 
 ### Research-Backed Safeguards
 
-The following production features were implemented based on findings from AES and AI grading literature:
-
-- **Boundary re-grading** addresses the known concentration of inter-rater disagreements at letter grade thresholds. Exams within +/-1.5% of cutoffs (90/80/70/60) are automatically re-graded and averaged on disagreement, with a full audit trail.
-- **Feedback specificity enforcement** responds to research showing AI feedback outperforms human feedback on metacognitive dimensions when it cites specific student work (Nazaretsky et al., 2026, *Journal of Computer Assisted Learning*). Vague feedback is detected and refined via a targeted follow-up prompt.
+- **Boundary re-grading** addresses the known concentration of inter-rater disagreements at letter grade thresholds (Williamson et al., 2012). Exams within +/-1.5% of cutoffs are automatically re-graded and averaged on disagreement.
+- **Feedback specificity enforcement** responds to research showing AI feedback outperforms human feedback on metacognitive dimensions when it cites specific student work (Nazaretsky et al., 2026, *Journal of Computer Assisted Learning*).
 - **2x contrast enhancement** mitigates handwriting quality bias documented in vision LLM grading (arXiv:2601.16724), where faint pencil responses receive systematically lower scores.
-- **Deterministic scoring** (temperature 0.0) eliminates random variation between grading runs, a baseline requirement for any assessment system claiming reliability (Fleiss, 1981).
-
-### Recommended Sample Sizes
-
-| Threshold | Purpose | Source |
-|---|---|---|
-| n >= 30 | Minimum for reliable SD, QWK, and ICC estimation | Fleiss (1981); Central Limit Theorem |
-| n >= 50 | Stable kappa/ICC with narrow confidence intervals | Gwet (2014); Sim & Wright (2005) |
-| n = 100-200 | ETS operational standard for AES system validation | Williamson et al. (2012) |
-| 10% of cohort | Ongoing semester-over-semester monitoring | Gradescope / UC Berkeley practice |
+- **Deterministic scoring** (temperature 0.0) eliminates random variation between grading runs, a baseline requirement for assessment reliability (Fleiss, 1981).
 
 ### Key References
 
-- Williamson, D. M., Xi, X., & Breyer, F. J. (2012). A framework for evaluation and use of automated scoring. *Educational Measurement: Issues and Practice*, 31(1), 2-13. [doi:10.1111/j.1745-3992.2011.00223.x](https://doi.org/10.1111/j.1745-3992.2011.00223.x)
-- Singh, A., Karayev, S., Gutowski, K., & Abbeel, P. (2017). Gradescope: A fast, flexible, and fair system for scalable assessment of handwritten work. *ACM L@S*. [doi:10.1145/3051457.3051466](https://doi.org/10.1145/3051457.3051466)
-- Landis, J. R., & Koch, G. G. (1977). The measurement of observer agreement for categorical data. *Biometrics*, 33(1), 159-174. [doi:10.2307/2529310](https://doi.org/10.2307/2529310)
+- Williamson, D. M., Xi, X., & Breyer, F. J. (2012). A framework for evaluation and use of automated scoring. *Educational Measurement: Issues and Practice*, 31(1), 2-13.
+- Singh, A., Karayev, S., Gutowski, K., & Abbeel, P. (2017). Gradescope: A fast, flexible, and fair system for scalable assessment of handwritten work. *ACM L@S*.
 - Fleiss, J. L. (1981). *Statistical Methods for Rates and Proportions* (2nd ed.). Wiley.
 - Nazaretsky, T., et al. (2026). AI feedback outperforms human feedback on metacognitive dimensions. *Journal of Computer Assisted Learning*.
-- Shermis, M. D., & Burstein, J. (Eds.). (2013). *Handbook of Automated Essay Evaluation*. Routledge.
-- Sim, J., & Wright, C. C. (2005). The kappa statistic in reliability studies. *Physical Therapy*, 85(3), 257-268. [doi:10.1093/ptj/85.3.257](https://doi.org/10.1093/ptj/85.3.257)
+- Landis, J. R., & Koch, G. G. (1977). The measurement of observer agreement for categorical data. *Biometrics*, 33(1), 159-174.
 
 ---
 
 ## Privacy Model
 
 - The `data/` directory is excluded from version control (`.gitignore`)
-- Cover page OCR runs locally via Ollama — student names and SIDs never leave the machine
+- Cover page OCR runs locally via Ollama -- student names and SIDs never leave the machine
 - Only anonymous IDs, exam page images, and the rubric are transmitted to the Claude API
-- Roster fuzzy matching runs entirely locally — no API call
-- **Private Mode** provides an additional presentation layer: names become invisible in the UI while remaining intact in the database and form submissions
+- Roster fuzzy matching runs entirely locally -- no API call
+- **Private Mode** hides all names, SIDs, and blurs cover pages across every page; designed for screen-sharing
 
 ---
 
@@ -233,4 +217,4 @@ The following production features were implemented based on findings from AES an
 
 This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
 
-You are free to use, modify, and distribute Rubrica for any purpose, including academic and personal use. If you deploy a modified version as a network service, the AGPL requires you to make your source code available. For commercial licensing inquiries, contact Travis Fraser.
+Free to use, modify, and distribute for any purpose, including academic and personal use. If you deploy a modified version as a network service, the AGPL requires you to make your source code available. For commercial licensing inquiries, contact Travis Fraser.
