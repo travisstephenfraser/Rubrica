@@ -439,7 +439,7 @@ window.toggleAllDetails = function(expand) {
 })();
 </script>
 
-{% if graded|length >= 20 %}
+{% if has_audit and graded|length >= 20 %}
 <div class="card mb-4 mt-4" style="border-left:4px solid {% if audit_health and audit_health.failures %}#dc2626{% else %}#7c3aed{% endif %};">
   <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
     <div>

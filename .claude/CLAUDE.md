@@ -1,26 +1,32 @@
 # Rubrica — Exam Grader
 
-Flask + SQLite + Claude Sonnet app that grades handwritten exams against rubrics. Single-file architecture (`grader.py`, ~2,050 lines). All data stays local except anonymized exam pages sent to Claude for grading.
+Flask + SQLite + Claude Sonnet app that grades handwritten exams against rubrics. Single-file architecture (`grader.py` + shared `scoring.py`). All data stays local except anonymized exam pages sent to Claude for grading.
 
-Two pillars govern all changes: **privacy** (student PII never leaves the machine) and **accuracy** (grading logic is protected by boundary re-grading, feedback specificity enforcement, and validated against ETS thresholds via independent dual-model audit (Gemini cross-family default, Opus fallback)). Accuracy includes score fairness: never introduce rounding or normalization that systematically costs students points. See `.claude/rules/` for details.
+Two pillars govern all changes: **privacy** (student PII never leaves the machine) and **accuracy** (grading logic is protected by boundary re-grading, feedback specificity enforcement, and deterministic post-processing). Accuracy includes score fairness: never introduce rounding or normalization that systematically costs students points. See `.claude/rules/` for details.
 
-## Key Files Beyond grader.py
+## Files
 
-- `audit_grader.py` — dual-model audit (Gemini/Opus); re-grades samples as reference scorer. Flask-callable via `start_audit()` + `get_audit_status()`, also runs standalone from CLI
-- `generate_audit_report.py` — produces PDF validation report from audit results
-- `.claude/agents/testing` — testing agent (`/testing`); blind validation analyst that reads audit JSON and evaluates inter-rater reliability, bias, and feedback quality using external psychometric standards. Has no knowledge of grading pipeline internals by design.
+- `grader.py` — Flask app: all routes, grading pipeline, DB access
+- `scoring.py` — shared scoring module: sub-part consolidation, feedback sanitization, score finalization, letter grade assignment
+- `templates/` — Jinja2 + Bootstrap 5 templates, dark mode via `data-bs-theme`
+- `requirements.txt` — runtime dependencies
+- `patch_rounding.py` — one-time DB migration that fixes a historical remainder-distribution bug on stored grade_data; run once with `--apply` if upgrading from a version earlier than the fix
 
-## Audit & Bundle Reports
+## Optional modules (import-guarded)
 
-- When generating the audit report or bundle, load the **most recent audit files** until reaching **>= 30 comparisons** (the minimum for reliable QWK/ICC). Do not load all historical audit data.
-- QWK and ICC metrics **must appear** in both the audit report and the bundle whenever n >= 30. If they're missing, the data loading is wrong.
-- **No hardcoded adjusted agreement figures** (e.g. "97% adj. for auditor error"). Those require manual validation of specific mismatches and must not auto-print on future reports.
+`grader.py` uses `try/except ImportError` guards so the app runs without these. When they are present locally, extra features appear; when absent, the UI hides the corresponding surfaces via `has_audit` / `has_builder` template flags.
+
+- Audit pipeline (dual-model re-grade, QWK/ICC reporting, PDF validation report)
+- Rubric builder (structured tier extraction, cross-version mapping)
+- Gmail OAuth sender (per-student PDF email distribution)
+
+These are not part of the open-source distribution today. The core grading pipeline is fully functional without them.
 
 ## Git & Deployment
 
 - **Always ask before pushing to remote.** Never `git push` without explicit approval, even after committing.
-- **Proprietary files are gitignored**, not tracked. The audit/insights pipeline, rubric-builder, and testing agent stay local. `grader.py` has import guards so the app runs without them. See `.gitignore` for the full list.
+- Student data stays gitignored. Databases, exam PDFs, `.env` files never go to the repo.
 
 ## Server
 
-- **Never start, stop, or restart the Flask server.** Travis manages the server process manually. If a change requires a restart, say so and wait.
+- **Never start, stop, or restart the Flask server.** The user manages the server process manually. If a change requires a restart, say so and wait.

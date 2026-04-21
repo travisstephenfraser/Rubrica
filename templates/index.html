@@ -122,6 +122,7 @@
       <a href="/exams" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center">Grade</a>
     </div>
 
+    {% if has_audit %}
     <hr class="my-3">
 
     {# --- Step 5: Audit (optional) --- #}
@@ -152,6 +153,7 @@
       </div>
       <a href="/quality" class="btn btn-sm btn-outline-primary flex-shrink-0 align-self-center" style="color:#7c3aed;border-color:#7c3aed;">Quality</a>
     </div>
+    {% endif %}
 
     <hr class="my-3">
 

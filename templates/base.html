@@ -66,7 +66,9 @@
         <li class="nav-item d-none d-lg-flex align-items-center"><span class="nav-sep"></span></li>
         <li class="nav-item"><a class="nav-link" href="/roster">Roster</a></li>
         <li class="nav-item"><a class="nav-link" href="/analytics">Analytics</a></li>
+        {% if has_audit %}
         <li class="nav-item"><a class="nav-link" href="/quality">Quality</a></li>
+        {% endif %}
       </ul>
       {# --- Utility buttons --- #}
       <ul class="navbar-nav align-items-center gap-1">
@@ -111,6 +113,7 @@
   </div>
 </div>
 
+{% if has_audit %}
 <!-- Global audit progress banner -->
 <div id="audit-banner" class="d-none" style="background:#1a0a2e;border-bottom:2px solid #7c3aed;">
   <div class="container py-2 d-flex align-items-center gap-3">
@@ -129,6 +132,7 @@
             class="btn-close btn-close-white d-none" aria-label="Close"></button>
   </div>
 </div>
+{% endif %}
 
 <div class="container pb-5 mt-4">
   {% with messages = get_flashed_messages(with_categories=true) %}
@@ -223,6 +227,7 @@
   tick(); // initial check on every page load
 }());
 
+{% if has_audit %}
 // Audit banner polling
 (function () {
   var _poller = null;
@@ -296,6 +301,7 @@
 
   tick();
 }());
+{% endif %}
 
 // Frosted glass: toggle .scrolled on scroll
 (function () {

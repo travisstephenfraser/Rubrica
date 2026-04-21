@@ -157,6 +157,11 @@ def inject_has_builder():
     return {"has_builder": _HAS_BUILDER}
 
 
+@app.context_processor
+def inject_has_audit():
+    return {"has_audit": _HAS_AUDIT}
+
+
 def _safe_redirect_back():
     """Return the referrer URL only if it's same-origin; otherwise fall back to /."""
     ref = request.form.get("next") or request.referrer
@@ -3383,10 +3388,11 @@ def email_send():
 
 if __name__ == "__main__":
     init_db()
+    port = int(os.environ.get("PORT", "5000"))
     print("\n Exam Grader running locally.")
     print("   Cover-page OCR uses local Ollama model — no student data leaves this machine.")
     print(f"   OCR model : {OLLAMA_VISION_MODEL}  (change OLLAMA_VISION_MODEL to swap)")
     print("   Grading   : Claude Sonnet via Anthropic API (anonymous IDs only)")
-    print("   Open: http://localhost:5000\n")
+    print(f"   Open: http://localhost:{port}\n")
     app.run(debug=os.environ.get("FLASK_DEBUG", "").lower() == "true",
-            host="127.0.0.1", port=5000, use_reloader=False)
+            host="127.0.0.1", port=port, use_reloader=False)
